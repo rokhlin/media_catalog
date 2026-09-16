@@ -1,0 +1,152 @@
+/* ==========================================================================
+   FaceRegistryUI Styles (Tab Buttons & Dropdown List View)
+   ========================================================================== */
+
+.face-registry-ui-container {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+}
+
+/* Dropdown Variant */
+.face-registry-dropdown-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.face-registry-dropdown-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--nav-tab-bg, rgba(15, 23, 42, 0.65));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--text-primary, #f1f5f9);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+  padding: 0.42rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
+}
+
+.face-registry-dropdown-btn:hover {
+  background: var(--card-bg-hover, rgba(30, 41, 59, 0.85));
+  border-color: var(--primary-color, #6366f1);
+  color: #ffffff;
+}
+
+.face-registry-dropdown-btn:focus-visible {
+  outline: 2px solid var(--primary-color, #6366f1);
+  outline-offset: 2px;
+}
+
+.face-registry-dropdown-btn.open {
+  border-color: var(--primary-color, #6366f1);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25), 0 4px 12px rgba(0, 0, 0, 0.25);
+  background: var(--card-bg-hover, rgba(30, 41, 59, 0.95));
+}
+
+.face-registry-dropdown-caret {
+  font-size: 0.65rem;
+  transition: transform 0.2s ease;
+  color: var(--text-secondary, #94a3b8);
+  margin-left: 0.2rem;
+}
+
+.face-registry-dropdown-btn.open .face-registry-dropdown-caret {
+  transform: rotate(180deg);
+}
+
+.face-registry-badge {
+  background: var(--primary-color, #6366f1);
+  color: #ffffff;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* Floating Dropdown Menu */
+.face-registry-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  background: var(--card-bg, rgba(15, 23, 42, 0.96));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.14));
+  border-radius: 10px;
+  padding: 0.35rem;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.25);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: faceRegistryMenuIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top left;
+}
+
+@keyframes faceRegistryMenuIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.face-registry-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-secondary, #94a3b8);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.face-registry-menu-item:hover,
+.face-registry-menu-item:focus-visible {
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--text-primary, #ffffff);
+  outline: none;
+}
+
+.face-registry-menu-item.active {
+  background: var(--primary-color, #4f46e5);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.35);
+}
+
+.face-registry-menu-divider {
+  height: 1px;
+  background: var(--border-color, rgba(255, 255, 255, 0.08));
+  margin: 0.3rem 0.2rem;
+}
+
+/* Button / Tab Variant */
+.face-registry-tabs-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}

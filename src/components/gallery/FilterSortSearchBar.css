@@ -1,0 +1,144 @@
+/* ==========================================================================
+   FilterSortSearchBar Styles (Button Row & Dropdown Menu View)
+   ========================================================================== */
+
+.filter-sort-container {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+}
+
+/* Dropdown Variant Trigger */
+.filter-sort-dropdown-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.filter-sort-dropdown-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--nav-tab-bg, rgba(15, 23, 42, 0.65));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--text-primary, #f1f5f9);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+  padding: 0.42rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
+}
+
+.filter-sort-dropdown-btn:hover {
+  background: var(--card-bg-hover, rgba(30, 41, 59, 0.85));
+  border-color: var(--primary-color, #6366f1);
+  color: #ffffff;
+}
+
+.filter-sort-dropdown-btn:focus-visible {
+  outline: 2px solid var(--primary-color, #6366f1);
+  outline-offset: 2px;
+}
+
+.filter-sort-dropdown-btn.open {
+  border-color: var(--primary-color, #6366f1);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25), 0 4px 12px rgba(0, 0, 0, 0.25);
+  background: var(--card-bg-hover, rgba(30, 41, 59, 0.95));
+}
+
+.filter-sort-dropdown-caret {
+  font-size: 0.65rem;
+  transition: transform 0.2s ease;
+  color: var(--text-secondary, #94a3b8);
+  margin-left: 0.2rem;
+}
+
+.filter-sort-dropdown-btn.open .filter-sort-dropdown-caret {
+  transform: rotate(180deg);
+}
+
+.filter-active-badge {
+  background: var(--primary-color, #6366f1);
+  color: #ffffff;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* Floating Dropdown Panel */
+.filter-sort-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 320px;
+  max-width: 480px;
+  background: var(--card-bg, rgba(15, 23, 42, 0.96));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.14));
+  border-radius: 12px;
+  padding: 1rem;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.25);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  animation: filterDropdownIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top left;
+}
+
+@keyframes filterDropdownIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.filter-dropdown-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.filter-dropdown-section-title {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-secondary, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.filter-dropdown-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.filter-dropdown-divider {
+  height: 1px;
+  background: var(--border-color, rgba(255, 255, 255, 0.08));
+  margin: 0.2rem 0;
+}
+
+.filter-dropdown-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+}

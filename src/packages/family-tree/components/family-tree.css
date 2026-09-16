@@ -1,0 +1,79 @@
+/* Family Tree & XYFlow Theme Adaptation */
+
+.react-flow__controls {
+  background: var(--card-bg-solid) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
+.react-flow__controls-button {
+  background: var(--card-bg-solid) !important;
+  border-bottom: 1px solid var(--border-color) !important;
+  fill: var(--text-primary) !important;
+  color: var(--text-primary) !important;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--nav-tab-bg) !important;
+}
+
+.react-flow__controls-button svg {
+  fill: var(--text-primary) !important;
+}
+
+.react-flow__minimap {
+  position: absolute !important;
+  right: auto !important;
+  left: 24px !important;
+  bottom: 24px !important;
+  width: 200px !important;
+  height: 150px !important;
+  max-width: 200px !important;
+  max-height: 150px !important;
+  background: var(--card-bg-solid) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 8px !important;
+  box-shadow: var(--shadow-card) !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+}
+
+.react-flow__minimap-svg {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 7px;
+}
+
+/* Family Tree Tabs Container (matching app-header rounded corner and shadow) */
+.family-tree-tabs-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.5rem 0.75rem 1rem;
+  background: var(--card-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.25);
+  animation: fadeIn 0.4s ease-out;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  width: 100%;
+  flex-shrink: 0;
+  z-index: 25;
+}
+
+.family-tree-content-viewport {
+  flex: 1;
+  position: relative;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}

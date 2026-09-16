@@ -1,0 +1,67 @@
+name: media-cataloger-web
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/rokhlin/media_cataloger_web:latest
+    container_name: media-cataloger-web
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:8000"
+    env_file:
+      - ${ENV_FILE:-./data/config/.env}
+    environment:
+      - PORT=8000
+      - NODE_ENV=production
+      - CATALOGER_API_URL=${CATALOGER_API_URL:-http://host.docker.internal:8001}
+      - MEDIA_INPUT=${MEDIA_INPUT:-/app/media_input}
+      - MEDIA_OUTPUT=${MEDIA_OUTPUT:-/app/media_output}
+      - CONFIG_PATH=${CONFIG_PATH:-/app/data/config}
+      - BACKUP_PATH=${BACKUP_PATH:-/app/backups}
+    volumes:
+      - ${CONFIG_PATH:-./data/config}:/app/data/config
+      - ${MEDIA_INPUT:-./media_input}:/app/media_input
+      - ${MEDIA_OUTPUT:-./media_output}:/app/media_output
+      - ${BACKUP_PATH:-./data/backups}:/app/backups
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    x-casaos:
+      ports:
+        - container: "8000"
+          description:
+            en_us: Media Library & Web UI Port
+      volumes:
+        - container: /app/data/config
+          description:
+            en_us: Config directory for settings and state
+        - container: /app/media_input
+          description:
+            en_us: Media library input folder
+        - container: /app/media_output
+          description:
+            en_us: Output folder with catalog database, face registry, and family tree database
+        - container: /app/backups
+          description:
+            en_us: System backups archive directory
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: web
+  description:
+    en_us: Modern Web UI, Family Tree Explorer, Media Viewer, Face Tagging & REST API for Media Archive Cataloger.
+  tagline:
+    en_us: Media Archive Web Dashboard & Family Tree Explorer
+  developer: rokhlin
+  author: rokhlin
+  icon: https://raw.githubusercontent.com/rokhlin/media_cataloger_web/main/public/favicon.ico
+  thumbnail: ""
+  title:
+    en_us: Media Cataloger Web UI
+  category: Media
+  port_map: "8000"
+  index: /
+  scheme: http

@@ -1,0 +1,105 @@
+[
+  {
+    "key": "first_frame_thumbnail_generation",
+    "classNames": [
+      "gallery-video-play-overlay"
+    ],
+    "buttonIds": [],
+    "isEnabled": true,
+    "description": "First-frame video thumbnail extraction and preview"
+  },
+  {
+    "key": "header_logs_button",
+    "classNames": [
+      "btn-logs-toggle"
+    ],
+    "buttonIds": [
+      "btn-logs-toggle"
+    ],
+    "isEnabled": true,
+    "description": "Header logs toggle button"
+  },
+  {
+    "key": "theme_quick_switcher",
+    "classNames": [
+      "theme-switcher-container"
+    ],
+    "buttonIds": [],
+    "isEnabled": true,
+    "description": "Header theme switcher and dark/light toggle"
+  },
+  {
+    "key": "language_switcher",
+    "classNames": [
+      "lang-switcher-wrap"
+    ],
+    "buttonIds": [],
+    "isEnabled": true,
+    "description": "Language switch buttons (EN/RU)"
+  },
+  {
+    "key": "status_badge_header",
+    "classNames": [
+      "status-badge"
+    ],
+    "buttonIds": [],
+    "isEnabled": true,
+    "description": "System status indicator badge in header"
+  },
+  {
+    "key": "gallery_view_mode_selector",
+    "classNames": [
+      "view-mode-selector"
+    ],
+    "buttonIds": [],
+    "isEnabled": true,
+    "description": "Media gallery view mode switcher buttons"
+  },
+  {
+    "key": "media_filter_bar",
+    "classNames": [
+      "gallery-filter-bar",
+      "gallery-filters-row"
+    ],
+    "buttonIds": [],
+    "isEnabled": true,
+    "description": "Media gallery search and filter toolbar"
+  },
+  {
+    "key": "view_switcher_dropdown",
+    "classNames": [
+      "view-switcher-dropdown"
+    ],
+    "buttonIds": [],
+    "isEnabled": true,
+    "description": "Show gallery view switcher as dropdown list instead of button group"
+  },
+  {
+    "key": "filter_bar_dropdown",
+    "classNames": [
+      "filter-bar-dropdown"
+    ],
+    "buttonIds": [],
+    "isEnabled": true,
+    "description": "Show filter, sort, and search bar as dropdown menu instead of expanded toolbar"
+  },
+  {
+    "key": "face_registry_dropdown",
+    "classNames": [
+      "face-registry-dropdown"
+    ],
+    "buttonIds": [],
+    "isEnabled": true,
+    "description": "Show face registry UI controls as dropdown list instead of tab buttons"
+  },
+  {
+    "key": "hide_top_screen_zoom_actions",
+    "classNames": [
+      "family-tree-top-zoom-actions",
+      "tree-top-zoom-actions"
+    ],
+    "buttonIds": [],
+    "isEnabled": true,
+    "description": "Hide Zoom In, Zoom Out, and Fit view buttons from Family Tree top screen actions"
+  }
+]
