@@ -29,7 +29,7 @@ export default function HeaderTheme({ onOpenAppearanceSettings }: HeaderThemePro
   const allPresets = [...presets, ...customThemes];
 
   return (
-    <div className="theme-switcher-container" ref={themeMenuRef}>
+    <div className={`theme-switcher-container ${isThemeMenuOpen ? 'open' : ''}`} ref={themeMenuRef}>
       <div className="theme-switcher-group">
         <button
           type="button"

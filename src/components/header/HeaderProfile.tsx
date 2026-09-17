@@ -41,12 +41,14 @@ export default function HeaderProfile({ onOpenLogin }: HeaderProfileProps) {
   }
 
   return (
-    <div className="theme-switcher-container" ref={userMenuRef}>
+    <div className={`theme-switcher-container user-profile-container ${isUserMenuOpen ? 'open' : ''}`} ref={userMenuRef}>
       <button
         type="button"
         className={`btn btn-secondary ${isUserMenuOpen ? 'active' : ''}`}
         onClick={() => setIsUserMenuOpen((prev) => !prev)}
         id="btn-user-profile"
+        aria-haspopup="true"
+        aria-expanded={isUserMenuOpen}
         style={{ padding: '0.5rem 0.9rem', fontSize: '0.88rem', display: 'flex', alignItems: 'center', gap: '0.45rem' }}
       >
         <span>👤</span>
@@ -78,7 +80,7 @@ export default function HeaderProfile({ onOpenLogin }: HeaderProfileProps) {
       </button>
 
       {isUserMenuOpen && (
-        <div className="theme-dropdown-menu" style={{ width: '220px' }}>
+        <div className="theme-dropdown-menu user-profile-dropdown-menu" id="user-profile-dropdown" style={{ width: '220px' }}>
           <div className="theme-dropdown-header">
             <strong>{currentUser.displayName || currentUser.username}</strong>
             <div style={{ fontSize: '0.78rem', color: '#9aa0a6' }}>@{currentUser.username}</div>

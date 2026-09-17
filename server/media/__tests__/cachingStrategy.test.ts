@@ -39,7 +39,9 @@ describe('Media Caching Strategy & Operations', () => {
     dbService = new DatabaseService(mockConfig);
     dbService.initDb();
 
-    mediaService = new MediaService(mockConfig, dbService);
+    const { ThumbnailService } = await import('../thumbnail.service.js');
+    const thumbnailService = new ThumbnailService(mockConfig);
+    mediaService = new MediaService(mockConfig, dbService, undefined, thumbnailService);
   });
 
   after(() => {
@@ -201,5 +203,108 @@ describe('Media Caching Strategy & Operations', () => {
 
     // Ensure item is now deleted from DB without running a full scan
     assert.strictEqual(dbService.getExistingFilesIndex().has(normTarget), false);
+  });
+
+  it('should identify and prune disconnected folders and update task status', async () => {
+    // Manually insert an orphaned item belonging to an unconfigured folder
+    const orphanedFolder = path.join(tmpDir, 'old_removed_nas');
+    const orphanedFile = path.join(orphanedFolder, 'stale_photo.jpg');
+
+    dbService.saveMediaItemsBatch([
+      {
+        id: 'stale-1',
+        file_path: orphanedFile,
+        filename: 'stale_photo.jpg',
+        folder: orphanedFolder,
+        is_image: true,
+        file_size: 1234,
+        mtime: Date.now() / 1000,
+        status: 'PROCESSED',
+      },
+    ]);
+
+    // Verify orphaned item is initially in SQLite
+    const normStale = orphanedFile.replace(/\\/g, '/').toLowerCase();
+    assert.strictEqual(dbService.getExistingFilesIndex().has(normStale), true);
+
+    // Run pruneDisconnectedFolders
+    const result = await mediaService.pruneDisconnectedFolders();
+    assert.strictEqual(result.status, 'success');
+    assert.ok(result.deleted_files_count >= 1);
+
+    // Verify orphaned item was pruned from SQLite
+    assert.strictEqual(dbService.getExistingFilesIndex().has(normStale), false);
+
+    // Verify task status
+    const task = mediaService.getActiveCacheTask();
+    assert.strictEqual(task.type, 'prune_folders');
+    assert.strictEqual(task.status, 'completed');
+    assert.ok(task.completed_at);
+  });
+
+  it('should clean unreferenced sidecar files older than 30 days while preserving fresh ones', async () => {
+    // Create old sidecar (>30 days old) and fresh sidecar (<30 days old)
+    const oldSidecarPath = path.join(tmpDir, 'old_orphan.json');
+    const freshSidecarPath = path.join(tmpDir, 'fresh_sidecar.json');
+    fs.writeFileSync(oldSidecarPath, JSON.stringify({ summary: 'old' }));
+    fs.writeFileSync(freshSidecarPath, JSON.stringify({ summary: 'fresh' }));
+
+    // Backdate the old sidecar to 40 days ago
+    const fortyDaysAgo = (Date.now() - 40 * 24 * 60 * 60 * 1000) / 1000;
+    fs.utimesSync(oldSidecarPath, fortyDaysAgo, fortyDaysAgo);
+
+    const res = await mediaService.cleanUnusedSidecars(30);
+    assert.ok(res.deletedCount >= 1);
+
+    // Old sidecar must be unlinked, fresh sidecar must still exist
+    assert.strictEqual(fs.existsSync(oldSidecarPath), false, 'Old unreferenced sidecar should be deleted');
+    assert.strictEqual(fs.existsSync(freshSidecarPath), true, 'Fresh sidecar should be preserved');
+  });
+
+  it('should completely reset all catalog data, thumbnails, and cache on clean slate reset', async () => {
+    // 1. Ensure some data exists in DB
+    const dummyFile = path.join(folderA, 'reset_test.jpg');
+    dbService.saveMediaItemsBatch([
+      {
+        id: 'reset-1',
+        file_path: dummyFile,
+        filename: 'reset_test.jpg',
+        folder: folderA,
+        is_image: true,
+        file_size: 5678,
+        mtime: Date.now() / 1000,
+        status: 'PROCESSED',
+      },
+    ]);
+
+    // 2. Put a dummy thumbnail in cache dir
+    const thumbDir = path.join(tmpDir, 'cache', 'thumbnails');
+    fs.mkdirSync(thumbDir, { recursive: true });
+    const dummyThumb = path.join(thumbDir, 'dummy_thumb.webp');
+    fs.writeFileSync(dummyThumb, 'dummy-thumb-data');
+    assert.strictEqual(fs.existsSync(dummyThumb), true);
+
+    // 3. Trigger resetAllData
+    const resetResult = await mediaService.resetAllData();
+    assert.strictEqual(resetResult.status, 'success');
+    assert.ok(resetResult.deleted_media_count >= 1);
+    assert.ok(resetResult.deleted_thumbnails_count >= 1);
+
+    // 4. Verify DB media items is completely empty
+    const countRow = dbService.getDb().prepare('SELECT COUNT(*) as count FROM media_items').get() as { count: number };
+    assert.strictEqual(countRow.count, 0, 'All media_items rows should be wiped');
+
+    // 5. Verify thumbnail file is deleted from disk
+    assert.strictEqual(fs.existsSync(dummyThumb), false, 'Thumbnail file should be cleared from disk');
+
+    // 6. Verify cache stats reset
+    const strategy = dbService.getCacheStrategyConfig();
+    assert.strictEqual(strategy.last_cached_at, null);
+    assert.strictEqual(strategy.last_cached_count, 0);
+
+    // 7. Verify task status
+    const task = mediaService.getActiveCacheTask();
+    assert.strictEqual(task.type, 'reset_all');
+    assert.strictEqual(task.status, 'completed');
   });
 });

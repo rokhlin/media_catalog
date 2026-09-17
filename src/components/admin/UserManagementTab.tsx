@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../services/authContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import type { User, UserRole, Permission } from '../../models/auth';
+import DirectoryBrowserModal from '../settings/DirectoryBrowserModal';
 
 const AVAILABLE_PERMISSIONS: { id: Permission; labelKey: string; descKey: string }[] = [
   { id: 'view_media', labelKey: 'permViewMedia', descKey: 'permViewMediaDesc' },
@@ -28,8 +29,24 @@ export default function UserManagementTab() {
   const [formPassword, setFormPassword] = useState<string>('');
   const [formRole, setFormRole] = useState<UserRole>('viewer');
   const [formPermissions, setFormPermissions] = useState<Permission[]>(['view_media']);
+  const [formRootFolderPath, setFormRootFolderPath] = useState<string>('');
   const [modalError, setModalError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // Directory Browser Modal state for User Workspace
+  const [browserModal, setBrowserModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    userId?: string;
+    userLabel?: string;
+    initialPath: string;
+    onSelect: (selectedPath: string) => void;
+  }>({
+    isOpen: false,
+    title: '',
+    initialPath: '',
+    onSelect: () => {},
+  });
 
   const fetchUsers = useCallback(async () => {
     setIsLoading(true);
@@ -60,6 +77,7 @@ export default function UserManagementTab() {
     setFormPassword('');
     setFormRole('editor');
     setFormPermissions(['view_media', 'edit_metadata', 'manage_faces', 'vault_access']);
+    setFormRootFolderPath('');
     setModalError(null);
     setIsModalOpen(true);
   }, []);
@@ -71,6 +89,7 @@ export default function UserManagementTab() {
     setFormPassword('');
     setFormRole(user.role);
     setFormPermissions(user.permissions || []);
+    setFormRootFolderPath(user.root_folder_path || '');
     setModalError(null);
     setIsModalOpen(true);
   }, []);
@@ -114,6 +133,7 @@ export default function UserManagementTab() {
             displayName: formDisplayName.trim() || undefined,
             role: formRole,
             permissions: formPermissions,
+            root_folder_path: formRootFolderPath.trim() || undefined,
           };
           if (formPassword && formPassword.trim().length >= 4) {
             payload.password = formPassword.trim();
@@ -133,16 +153,21 @@ export default function UserManagementTab() {
           }
         } else {
           // Create
+          const payload: any = {
+            username: formUsername.trim(),
+            displayName: formDisplayName.trim() || formUsername.trim(),
+            password: formPassword,
+            role: formRole,
+            permissions: formPermissions,
+          };
+          if (formRootFolderPath.trim()) {
+            payload.root_folder_path = formRootFolderPath.trim();
+          }
+
           const res = await authFetch('/api/auth/users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              username: formUsername.trim(),
-              displayName: formDisplayName.trim() || formUsername.trim(),
-              password: formPassword,
-              role: formRole,
-              permissions: formPermissions,
-            }),
+            body: JSON.stringify(payload),
           });
 
           if (!res.ok) {
@@ -161,8 +186,55 @@ export default function UserManagementTab() {
         setIsSubmitting(false);
       }
     },
-    [editingUserId, formUsername, formDisplayName, formPassword, formRole, formPermissions, authFetch, fetchUsers, t]
+    [editingUserId, formUsername, formDisplayName, formPassword, formRole, formPermissions, formRootFolderPath, authFetch, fetchUsers, t]
   );
+
+  const handleOpenFormBrowser = useCallback(() => {
+    setBrowserModal({
+      isOpen: true,
+      title: editingUserId
+        ? `Select Workspace Folder for ${formUsername || 'User'}`
+        : 'Select User Workspace Folder',
+      userId: editingUserId || undefined,
+      userLabel: formDisplayName || formUsername || 'New User',
+      initialPath: formRootFolderPath || '',
+      onSelect: (selectedPath) => {
+        setFormRootFolderPath(selectedPath);
+        setBrowserModal((prev) => ({ ...prev, isOpen: false }));
+      },
+    });
+  }, [editingUserId, formUsername, formDisplayName, formRootFolderPath]);
+
+  const handleOpenUserBrowser = useCallback((user: User) => {
+    setBrowserModal({
+      isOpen: true,
+      title: `Browse Folders for ${user.displayName || user.username}`,
+      userId: user.id,
+      userLabel: `${user.username} (${user.displayName || user.role})`,
+      initialPath: user.root_folder_path || '',
+      onSelect: async (selectedPath) => {
+        if (
+          window.confirm(
+            `Update workspace root folder for "${user.username}" to "${selectedPath}"?`
+          )
+        ) {
+          try {
+            const res = await authFetch(`/api/auth/users/${user.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ root_folder_path: selectedPath }),
+            });
+            if (res.ok) {
+              await fetchUsers();
+            }
+          } catch (err) {
+            console.error('Failed to update user root path:', err);
+          }
+        }
+        setBrowserModal((prev) => ({ ...prev, isOpen: false }));
+      },
+    });
+  }, [authFetch, fetchUsers]);
 
   const handleDeleteUser = useCallback(
     async (user: User) => {
@@ -233,6 +305,7 @@ export default function UserManagementTab() {
                 <th>{t('rbacColUsername' as any) || 'Username'}</th>
                 <th>{t('rbacColDisplayName' as any) || 'Display Name'}</th>
                 <th>{t('rbacColRole' as any) || 'Role'}</th>
+                <th>{t('rbacColWorkspace' as any) || 'Workspace Folder'}</th>
                 <th>{t('rbacColPermissions' as any) || 'Permissions'}</th>
                 <th style={{ textAlign: 'right' }}>{t('rbacColActions' as any) || 'Actions'}</th>
               </tr>
@@ -295,6 +368,22 @@ export default function UserManagementTab() {
                       </span>
                     </td>
                     <td>
+                      <div
+                        style={{
+                          fontSize: '0.78rem',
+                          fontFamily: 'monospace',
+                          color: user.root_folder_path ? '#67e8f9' : '#94a3b8',
+                          maxWidth: '180px',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                        title={user.root_folder_path || 'Default Sandbox Workspace'}
+                      >
+                        {user.root_folder_path || 'Default Sandbox'}
+                      </div>
+                    </td>
+                    <td>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
                         {user.role === 'admin' ? (
                           <span style={{ fontSize: '0.78rem', color: '#d8b4fe' }}>
@@ -324,6 +413,15 @@ export default function UserManagementTab() {
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.4rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ padding: '0.3rem 0.6rem', fontSize: '0.78rem' }}
+                          title={`Browse folders available for ${user.username}`}
+                          onClick={() => handleOpenUserBrowser(user)}
+                        >
+                          📂 {t('btnFolders' as any) || 'Folders'}
+                        </button>
                         <button
                           type="button"
                           className="btn btn-secondary"
@@ -454,6 +552,33 @@ export default function UserManagementTab() {
                 </div>
 
                 <div className="login-form-group">
+                  <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>{t('rbacWorkspaceFolderLabel' as any) || 'Workspace Root Folder (Optional)'}</span>
+                    <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                      Custom base path for user media & sandbox
+                    </span>
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <input
+                      type="text"
+                      className="login-input"
+                      value={formRootFolderPath}
+                      onChange={(e) => setFormRootFolderPath(e.target.value)}
+                      placeholder="e.g. Z:\ or C:\Media\Users\Jane or /data/jane"
+                      style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.85rem' }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                      onClick={handleOpenFormBrowser}
+                    >
+                      📂 {t('btnBrowse' as any) || 'Browse...'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="login-form-group">
                   <label>{t('rbacPermissionsLabel' as any) || 'Granular Permissions'}</label>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem' }}>
                     {AVAILABLE_PERMISSIONS.map((perm) => {
@@ -511,6 +636,18 @@ export default function UserManagementTab() {
           </div>
         </div>
       )}
+
+      {/* Directory Browser Modal for User Workspace & Folders */}
+      <DirectoryBrowserModal
+        isOpen={browserModal.isOpen}
+        title={browserModal.title}
+        userId={browserModal.userId}
+        userLabel={browserModal.userLabel}
+        initialPath={browserModal.initialPath}
+        mode="folder"
+        onSelect={browserModal.onSelect}
+        onClose={() => setBrowserModal((prev) => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }

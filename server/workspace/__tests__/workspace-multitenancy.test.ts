@@ -38,10 +38,10 @@ describe('Multi-Tenant Workspace & Security Isolation', () => {
     workspaceService = new UserWorkspaceService(configMock as AppConfigService);
     guard = new PathValidationGuard(workspaceService);
 
-    dbService = new DatabaseService(configMock as AppConfigService, workspaceService);
+    dbService = new DatabaseService(configMock as AppConfigService);
     dbService.initDb();
 
-    familyTreeDbService = new FamilyTreeDatabaseService(configMock as AppConfigService, workspaceService);
+    familyTreeDbService = new FamilyTreeDatabaseService(configMock as AppConfigService);
     familyTreeDbService.initDb();
 
     authService = new AuthService(dbService, workspaceService);
@@ -139,6 +139,39 @@ describe('Multi-Tenant Workspace & Security Isolation', () => {
     assert.throws(
       () => guard.canActivate(mockContext),
       (err: any) => err instanceof ForbiddenException && err.message.includes('outside the authorized user workspace')
+    );
+  });
+
+  it('PathValidationGuard should allow administrators to configure and access host drives like Z:\\', () => {
+    const mockAdminContext: any = {
+      switchToHttp: () => ({
+        getRequest: () => ({
+          user: { sub: 'user_admin_default', role: 'admin', permissions: ['admin_panel'] },
+          body: { input_folders: ['Z:\\'] },
+          query: {},
+          params: {},
+        }),
+      }),
+    };
+
+    assert.equal(guard.canActivate(mockAdminContext), true);
+  });
+
+  it('PathValidationGuard should still block administrators on traversal .. attempts', () => {
+    const mockAdminContext: any = {
+      switchToHttp: () => ({
+        getRequest: () => ({
+          user: { sub: 'user_admin_default', role: 'admin', permissions: ['admin_panel'] },
+          body: { input_folders: ['Z:\\..\\Windows\\System32'] },
+          query: {},
+          params: {},
+        }),
+      }),
+    };
+
+    assert.throws(
+      () => guard.canActivate(mockAdminContext),
+      (err: any) => err instanceof ForbiddenException && err.message.includes('traversal')
     );
   });
 

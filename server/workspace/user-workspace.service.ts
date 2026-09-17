@@ -95,4 +95,31 @@ export class UserWorkspaceService {
     const relative = path.relative(normRoot, normTarget);
     return !relative.startsWith('..') && !path.isAbsolute(relative);
   }
+
+  /**
+   * Checks if a path is within the globally configured catalog input or output folders.
+   */
+  public isPathInConfiguredFolders(targetPath: string): boolean {
+    if (!targetPath || !targetPath.trim()) return false;
+    const resolvedTarget = path.resolve(targetPath.trim());
+    const normTarget = (process.platform === 'win32' ? resolvedTarget.toLowerCase() : resolvedTarget).replace(/\\/g, '/');
+
+    // Tenant private workspaces (inside usersBaseDir) are never treated as shared configured media
+    if (this.config?.usersBaseDir) {
+      const normUsersBase = (process.platform === 'win32' ? path.resolve(this.config.usersBaseDir).toLowerCase() : path.resolve(this.config.usersBaseDir)).replace(/\\/g, '/').replace(/\/+$/, '');
+      if (normTarget === normUsersBase || normTarget.startsWith(normUsersBase + '/')) {
+        return false;
+      }
+    }
+
+    const allowedFolders = [
+      ...(this.config?.inputFolders || []),
+      this.config?.outputFolder,
+    ].filter(Boolean) as string[];
+
+    return allowedFolders.some((folder) => {
+      const normFolder = (process.platform === 'win32' ? path.resolve(folder).toLowerCase() : path.resolve(folder)).replace(/\\/g, '/').replace(/\/+$/, '');
+      return normTarget === normFolder || normTarget.startsWith(normFolder + '/');
+    });
+  }
 }

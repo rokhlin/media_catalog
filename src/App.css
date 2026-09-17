@@ -11,6 +11,8 @@
 
 /* Header */
 .app-header {
+  position: relative;
+  z-index: 500;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -216,6 +218,8 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 0.45rem;
+  position: relative;
+  z-index: 501;
 }
 
 .visual-controls {
@@ -224,6 +228,8 @@
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
+  position: relative;
+  z-index: 502;
 }
 
 .header-actions {
@@ -237,6 +243,11 @@
 .theme-switcher-container {
   position: relative;
   display: inline-flex;
+}
+
+.theme-switcher-container.open,
+.theme-switcher-container:focus-within {
+  z-index: 1100;
 }
 
 .theme-switcher-group {
@@ -318,11 +329,16 @@
   box-shadow: var(--shadow-modal, 0 16px 40px rgba(0, 0, 0, 0.45));
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  z-index: 1100;
+  z-index: 1200;
   animation: fadeIn 0.2s ease-out;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.user-profile-dropdown-menu {
+  width: 230px;
+  z-index: 1250;
 }
 
 .theme-dropdown-header {

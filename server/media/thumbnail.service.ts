@@ -354,4 +354,30 @@ export class ThumbnailService {
     const resultPath = await generationPromise;
     return { filePath: resultPath, isCached: false };
   }
+
+  /**
+   * Completely clear all generated thumbnail files on disk.
+   */
+  async clearAllThumbnails(): Promise<{ deletedCount: number }> {
+    let count = 0;
+    try {
+      if (fs.existsSync(this.cacheDir)) {
+        const files = await fs.promises.readdir(this.cacheDir);
+        for (const file of files) {
+          if (file.endsWith('.webp') || file.includes('.tmp.')) {
+            try {
+              await fs.promises.unlink(path.join(this.cacheDir, file));
+              count++;
+            } catch {
+              // ignore individual delete error
+            }
+          }
+        }
+      }
+      this.logger.log(`clearAllThumbnails: deleted ${count} cached thumbnail files from ${this.cacheDir}`);
+    } catch (err: any) {
+      this.logger.warn(`Failed clearing thumbnails directory: ${err.message}`);
+    }
+    return { deletedCount: count };
+  }
 }

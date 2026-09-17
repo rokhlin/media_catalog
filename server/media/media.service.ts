@@ -5,6 +5,7 @@ import axios from 'axios';
 import { AppConfigService } from '../config/config.service.js';
 import { DatabaseService } from '../database/database.service.js';
 import { FamilyTreePublicService } from '../family-tree/family-tree-public.service.js';
+import { ThumbnailService } from './thumbnail.service.js';
 import { UpdateMediaMetadataDto } from './dto/media.dto.js';
 
 export interface ScannedMediaFile {
@@ -43,6 +44,7 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
     @Inject(AppConfigService) private readonly config: AppConfigService,
     @Inject(DatabaseService) private readonly db: DatabaseService,
     @Optional() @Inject(FamilyTreePublicService) private readonly familyTreePublicService?: FamilyTreePublicService,
+    @Optional() @Inject(ThumbnailService) private readonly thumbnailService?: ThumbnailService,
   ) {}
 
   private cachedMediaList: any[] | null = null;
@@ -53,6 +55,22 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
   private baseNamePathMap: Map<string, string> = new Map();
   private automationTimer: NodeJS.Timeout | null = null;
   private hasInitialScanRun = false;
+
+  private activeCacheTask: {
+    id: string;
+    type: 'prune_folders' | 'reset_all' | 'recache';
+    status: 'idle' | 'running' | 'completed' | 'failed';
+    message: string;
+    details?: any;
+    started_at: string | null;
+    completed_at?: string | null;
+  } = {
+    id: '',
+    type: 'recache',
+    status: 'idle',
+    message: '',
+    started_at: null,
+  };
 
   private hydrateItemsFromPersisted(rows: any[]): any[] {
     const faceCounts = this.db.getFacesCountBySourceFile();
@@ -380,9 +398,10 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
   recalculateCacheAfterFolderChange(change: {
     removedFolders?: string[];
     renamedFolders?: Array<{ oldPath: string; newPath: string }>;
-  }): void {
+  }): number {
     const { removedFolders = [], renamedFolders = [] } = change;
-    if (removedFolders.length === 0 && renamedFolders.length === 0) return;
+    let deletedFilesCount = 0;
+    if (removedFolders.length === 0 && renamedFolders.length === 0) return 0;
 
     if (this.cachedMediaList) {
       const normRemoved = removedFolders.map((f) => f.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, ''));
@@ -392,7 +411,7 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
         this.cachedMediaList = this.cachedMediaList.filter((item) => {
           const itemPath = (item.file_path || '').replace(/\\/g, '/').toLowerCase();
           const itemFolder = (item.folder || '').replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
-          return !normRemoved.some((rf) => itemPath.startsWith(rf + '/') || itemFolder === rf);
+          return !normRemoved.some((rf) => itemPath.startsWith(rf + '/') || itemFolder === rf || itemFolder.startsWith(rf + '/'));
         });
       }
 
@@ -421,8 +440,35 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
     try {
       const db = this.db.getDb();
       for (const rf of removedFolders) {
-        const normF = rf.replace(/\\/g, '/');
-        db.prepare('DELETE FROM media_items WHERE folder = ? OR file_path LIKE ?').run(normF, `${normF}/%`);
+        const normF = rf.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
+        const backF = rf.replace(/\//g, '\\').toLowerCase().replace(/\\+$/, '');
+        const rows = db.prepare(`
+          SELECT file_path FROM media_items
+          WHERE folder = ? OR folder = ?
+             OR LOWER(REPLACE(folder, char(92), '/')) = ?
+             OR LOWER(REPLACE(folder, '/', char(92))) = ?
+             OR file_path LIKE ? OR file_path LIKE ?
+             OR LOWER(REPLACE(file_path, char(92), '/')) LIKE ?
+             OR LOWER(REPLACE(file_path, '/', char(92))) LIKE ?
+        `).all(
+          rf, backF, normF, backF,
+          `${normF}/%`, `${backF}\\%`, `${normF}/%`, `${backF}\\%`
+        ) as any[];
+
+        const toDelete = rows.map((r: any) => r.file_path).filter(Boolean);
+        if (toDelete.length > 0) {
+          this.db.deleteMediaItemsBatch(toDelete);
+          deletedFilesCount += toDelete.length;
+        } else {
+          const info = db.prepare(`
+            DELETE FROM media_items 
+            WHERE folder = ? OR folder = ? 
+               OR LOWER(REPLACE(folder, char(92), '/')) = ? 
+               OR file_path LIKE ? OR file_path LIKE ?
+               OR LOWER(REPLACE(file_path, char(92), '/')) LIKE ?
+          `).run(rf, backF, normF, `${normF}/%`, `${backF}\\%`, `${normF}/%`);
+          deletedFilesCount += info.changes;
+        }
       }
       for (const { oldPath, newPath } of renamedFolders) {
         const normOld = oldPath.replace(/\\/g, '/');
@@ -449,6 +495,208 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `Recalculated cache after folder changes (removed=${removedFolders.length}, renamed=${renamedFolders.length}). Remaining cache items: ${currentTotal}`,
     );
+    return deletedFilesCount;
+  }
+
+  /**
+   * Prune disconnected or removed folders from cache and database.
+   * If removedFolders is provided, prunes those specific folders.
+   * Otherwise compares all stored folders in SQLite against this.config.inputFolders.
+   */
+  async pruneDisconnectedFolders(removedFolders?: string[]): Promise<{
+    status: string;
+    removed_folders: string[];
+    deleted_files_count: number;
+    remaining_total: number;
+  }> {
+    this.activeCacheTask = {
+      id: `prune_${Date.now()}`,
+      type: 'prune_folders',
+      status: 'running',
+      message: 'Pruning disconnected folders from cache...',
+      started_at: new Date().toISOString(),
+    };
+
+    try {
+      const foldersToPrune: string[] = removedFolders ? [...removedFolders] : [];
+      if (foldersToPrune.length === 0) {
+        // Automatically discover all folders in DB that are not in current inputFolders
+        const activeNorm = this.config.inputFolders.map((f) => f.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, ''));
+        const db = this.db.getDb();
+        const rows = db.prepare("SELECT DISTINCT folder FROM media_items WHERE folder IS NOT NULL AND folder != ''").all() as any[];
+        for (const r of rows) {
+          const fNorm = (r.folder || '').replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
+          const isActive = activeNorm.some((af) => fNorm === af || fNorm.startsWith(af + '/'));
+          if (!isActive && !foldersToPrune.includes(r.folder)) {
+            foldersToPrune.push(r.folder);
+          }
+        }
+      }
+
+      let deletedCount = 0;
+      if (foldersToPrune.length > 0) {
+        deletedCount += this.recalculateCacheAfterFolderChange({ removedFolders: foldersToPrune });
+      }
+
+      // Also invoke cleanOrphanedMedia against active input folders to guarantee no stale paths linger
+      const orphanResult = this.db.cleanOrphanedMedia(this.config.inputFolders);
+      deletedCount += orphanResult.deletedCount;
+
+      // Update in-memory cached list if items were orphaned
+      if (orphanResult.deletedPaths.length > 0 && this.cachedMediaList) {
+        const deletedSet = new Set(orphanResult.deletedPaths.map((p) => p.toLowerCase().replace(/\\/g, '/')));
+        this.cachedMediaList = this.cachedMediaList.filter(
+          (item) => !deletedSet.has((item.file_path || '').toLowerCase().replace(/\\/g, '/'))
+        );
+        this.cacheTimestamp = Date.now();
+        this.scanStatus.scanned_count = this.cachedMediaList.length;
+      }
+
+      // Clean unreferenced sidecars older than 30 days
+      await this.cleanUnusedSidecars(30);
+
+      const remainingTotal = this.cachedMediaList ? this.cachedMediaList.length : 0;
+      this.activeCacheTask = {
+        id: this.activeCacheTask.id,
+        type: 'prune_folders',
+        status: 'completed',
+        message: `Pruned ${foldersToPrune.length} folder(s) and ${deletedCount} file(s) from cache.`,
+        started_at: this.activeCacheTask.started_at,
+        completed_at: new Date().toISOString(),
+        details: { removed_folders: foldersToPrune, deleted_files_count: deletedCount, remaining_total: remainingTotal },
+      };
+
+      return {
+        status: 'success',
+        removed_folders: foldersToPrune,
+        deleted_files_count: deletedCount,
+        remaining_total: remainingTotal,
+      };
+    } catch (err: any) {
+      this.activeCacheTask = {
+        id: this.activeCacheTask.id,
+        type: 'prune_folders',
+        status: 'failed',
+        message: `Pruning failed: ${err.message}`,
+        started_at: this.activeCacheTask.started_at,
+        completed_at: new Date().toISOString(),
+      };
+      throw err;
+    }
+  }
+
+  /**
+   * Clean unreferenced sidecar .json files older than maxAgeDays (default 30 days) from outputFolder.
+   */
+  async cleanUnusedSidecars(maxAgeDays: number = 30): Promise<{ deletedCount: number }> {
+    let count = 0;
+    try {
+      const outputDir = this.config.outputFolder;
+      if (!fs.existsSync(outputDir)) return { deletedCount: 0 };
+
+      // Collect all active sidecar paths in DB
+      const db = this.db.getDb();
+      const rows = db.prepare('SELECT sidecar_path FROM media_items WHERE sidecar_path IS NOT NULL').all() as any[];
+      const activeSidecars = new Set<string>();
+      for (const r of rows) {
+        if (r.sidecar_path) {
+          activeSidecars.add(path.resolve(r.sidecar_path).toLowerCase());
+        }
+      }
+
+      const cutoffMs = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+      const entries = await fs.promises.readdir(outputDir);
+      for (const entry of entries) {
+        if (entry.endsWith('.json') && !entry.includes('settings') && !entry.includes('feature_flags')) {
+          const fullPath = path.join(outputDir, entry);
+          try {
+            const stat = await fs.promises.stat(fullPath);
+            if (stat.mtimeMs < cutoffMs && !activeSidecars.has(path.resolve(fullPath).toLowerCase())) {
+              await fs.promises.unlink(fullPath);
+              count++;
+            }
+          } catch {}
+        }
+      }
+      if (count > 0) {
+        this.logger.log(`cleanUnusedSidecars: cleaned ${count} unused sidecars older than ${maxAgeDays} days`);
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed cleaning unused sidecars: ${err.message}`);
+    }
+    return { deletedCount: count };
+  }
+
+  /**
+   * Complete clean-slate reset:
+   * 1. Wipes all SQLite catalog tables (media items, metadata, faces, sync history, hashes, vault)
+   * 2. Clears server-generated thumbnail files on disk
+   * 3. Cleans unused sidecars older than 30 days
+   * 4. Clears in-memory caches and lookup maps
+   */
+  async resetAllData(): Promise<{
+    status: string;
+    deleted_media_count: number;
+    deleted_thumbnails_count: number;
+    message: string;
+  }> {
+    this.activeCacheTask = {
+      id: `reset_${Date.now()}`,
+      type: 'reset_all',
+      status: 'running',
+      message: 'Resetting all catalog data, thumbnails, and cache...',
+      started_at: new Date().toISOString(),
+    };
+
+    try {
+      // 1. Wipe SQLite tables
+      const { deletedMediaCount } = this.db.resetAllCatalogData();
+
+      // 2. Clear thumbnail cache files on disk
+      let thumbCount = 0;
+      if (this.thumbnailService) {
+        const thumbRes = await this.thumbnailService.clearAllThumbnails();
+        thumbCount = thumbRes.deletedCount;
+      }
+
+      // 3. Clean unused sidecars older than 30 days
+      await this.cleanUnusedSidecars(30);
+
+      // 4. Invalidate memory cache
+      this.invalidateCache();
+
+      this.activeCacheTask = {
+        id: this.activeCacheTask.id,
+        type: 'reset_all',
+        status: 'completed',
+        message: `Reset completed: deleted ${deletedMediaCount} media items and ${thumbCount} thumbnails.`,
+        started_at: this.activeCacheTask.started_at,
+        completed_at: new Date().toISOString(),
+      };
+
+      this.logger.log(`resetAllData completed: ${deletedMediaCount} media records and ${thumbCount} thumbnails cleared.`);
+
+      return {
+        status: 'success',
+        deleted_media_count: deletedMediaCount,
+        deleted_thumbnails_count: thumbCount,
+        message: 'All catalog data, thumbnails, and cache successfully reset.',
+      };
+    } catch (err: any) {
+      this.activeCacheTask = {
+        id: this.activeCacheTask.id,
+        type: 'reset_all',
+        status: 'failed',
+        message: `Reset failed: ${err.message}`,
+        started_at: this.activeCacheTask.started_at,
+        completed_at: new Date().toISOString(),
+      };
+      throw err;
+    }
+  }
+
+  getActiveCacheTask() {
+    return this.activeCacheTask;
   }
 
   /**

@@ -843,6 +843,77 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Remove all media items that do not belong to currently configured active input folders.
+   */
+  cleanOrphanedMedia(activeInputFolders: string[]): { deletedCount: number; deletedPaths: string[] } {
+    const db = this.getDb();
+    const normActive = (activeInputFolders || [])
+      .map((f) => f.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, ''))
+      .filter(Boolean);
+
+    const rows = db.prepare('SELECT file_path, folder FROM media_items').all() as any[];
+    const orphanedPaths: string[] = [];
+
+    for (const r of rows) {
+      if (!r.file_path) continue;
+      const pathNorm = r.file_path.replace(/\\/g, '/').toLowerCase();
+      const folderNorm = (r.folder || '').replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
+
+      const belongsToActive = normActive.some(
+        (af) => pathNorm.startsWith(af + '/') || folderNorm === af || folderNorm.startsWith(af + '/')
+      );
+
+      if (!belongsToActive) {
+        orphanedPaths.push(r.file_path);
+      }
+    }
+
+    if (orphanedPaths.length > 0) {
+      this.deleteMediaItemsBatch(orphanedPaths);
+      this.logger.log(`cleanOrphanedMedia: pruned ${orphanedPaths.length} media items from removed folders.`);
+    }
+
+    return { deletedCount: orphanedPaths.length, deletedPaths: orphanedPaths };
+  }
+
+  /**
+   * Completely wipe all catalog data (media items, metadata, faces, sync history, hashes, vault)
+   * and reset cache stats to a clean slate.
+   */
+  resetAllCatalogData(): { deletedMediaCount: number } {
+    const db = this.getDb();
+    let count = 0;
+    try {
+      const row = db.prepare('SELECT COUNT(*) as count FROM media_items').get() as { count: number };
+      count = row?.count || 0;
+    } catch {}
+
+    const tx = db.transaction(() => {
+      db.prepare('DELETE FROM media_metadata').run();
+      db.prepare('DELETE FROM media_faces').run();
+      db.prepare('DELETE FROM media_tags').run();
+      db.prepare('DELETE FROM sync_history').run();
+      db.prepare('DELETE FROM face_registry').run();
+      db.prepare('DELETE FROM media_hashes').run();
+      db.prepare('DELETE FROM vault_items').run();
+      db.prepare('DELETE FROM media_items').run();
+
+      db.prepare(`
+        UPDATE cache_strategy
+        SET last_cached_at = NULL,
+            last_cached_count = 0,
+            last_run_duration_ms = 0,
+            updated_at = datetime('now', 'localtime')
+        WHERE id = 1
+      `).run();
+    });
+
+    tx();
+    this.logger.log(`resetAllCatalogData: completely wiped all ${count} catalog media rows and cache stats.`);
+    return { deletedMediaCount: count };
+  }
+
+  /**
    * Read lightweight existing files map (path -> { mtime, size, status, folder, sidecar_path })
    * for sub-second incremental reconciliation with physical storage.
    */
@@ -1660,7 +1731,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
   listUsers(): any[] {
     const db = this.getDb();
-    const rows = db.prepare('SELECT id, username, display_name, role, permissions, created_at, updated_at FROM users ORDER BY created_at ASC').all() as any[];
+    const rows = db.prepare('SELECT id, username, display_name, role, permissions, root_folder_path, created_at, updated_at FROM users ORDER BY created_at ASC').all() as any[];
     return rows.map((r) => ({
       ...r,
       permissions: typeof r.permissions === 'string' ? JSON.parse(r.permissions || '[]') : r.permissions,
@@ -1675,12 +1746,13 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     passwordSalt: string;
     role: string;
     permissions: string[];
+    root_folder_path?: string;
   }): any {
     const db = this.getDb();
     const permJson = JSON.stringify(user.permissions || []);
     db.prepare(`
-      INSERT INTO users (id, username, display_name, password_hash, password_salt, role, permissions, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+      INSERT INTO users (id, username, display_name, password_hash, password_salt, role, permissions, root_folder_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
     `).run(
       user.id,
       user.username.trim(),
@@ -1688,7 +1760,8 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       user.passwordHash,
       user.passwordSalt,
       user.role || 'viewer',
-      permJson
+      permJson,
+      user.root_folder_path || null
     );
     return this.getUserById(user.id);
   }
@@ -1701,6 +1774,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       passwordSalt?: string;
       role?: string;
       permissions?: string[];
+      root_folder_path?: string;
     }
   ): any {
     const db = this.getDb();
@@ -1712,6 +1786,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     const newSalt = updates.passwordSalt !== undefined ? updates.passwordSalt : current.password_salt;
     const newRole = updates.role !== undefined ? updates.role : current.role;
     const newPerms = updates.permissions !== undefined ? JSON.stringify(updates.permissions) : JSON.stringify(current.permissions || []);
+    const newRootPath = updates.root_folder_path !== undefined ? updates.root_folder_path : current.root_folder_path;
 
     db.prepare(`
       UPDATE users SET
@@ -1720,9 +1795,10 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         password_salt = ?,
         role = ?,
         permissions = ?,
+        root_folder_path = ?,
         updated_at = datetime('now', 'localtime')
       WHERE id = ?
-    `).run(newDisplayName, newHash, newSalt, newRole, newPerms, id);
+    `).run(newDisplayName, newHash, newSalt, newRole, newPerms, newRootPath, id);
 
     return this.getUserById(id);
   }

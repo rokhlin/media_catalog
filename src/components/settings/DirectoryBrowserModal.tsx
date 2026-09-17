@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '../../i18n/LanguageContext';
+import { useAuth } from '../../services/authContext';
 
 export interface DirectoryBrowserModalProps {
   isOpen: boolean;
   title?: string;
   initialPath?: string;
   mode?: 'folder' | 'file';
+  userId?: string;
+  userLabel?: string;
   onSelect: (selectedPath: string) => void;
   onClose: () => void;
 }
@@ -16,6 +19,12 @@ interface BrowseData {
   shortcuts: Array<{ label: string; path: string }>;
   directories: string[];
   files: string[];
+  user_workspace?: {
+    userId: string;
+    rootDir: string;
+    mediaDir: string;
+    catalogDir: string;
+  } | null;
   error?: string;
 }
 
@@ -24,10 +33,13 @@ export default function DirectoryBrowserModal({
   title,
   initialPath = '',
   mode = 'folder',
+  userId,
+  userLabel,
   onSelect,
   onClose,
 }: DirectoryBrowserModalProps) {
   const { t } = useLanguage();
+  const { authFetch } = useAuth();
   const [pathInput, setPathInput] = useState(initialPath);
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [browseData, setBrowseData] = useState<BrowseData | null>(null);
@@ -38,21 +50,29 @@ export default function DirectoryBrowserModal({
     setLoading(true);
     setSelectedFile(null);
     try {
-      const url = `/api/fs/browse?path=${encodeURIComponent(targetPath)}&mode=${mode}`;
-      const res = await fetch(url);
+      let url = `/api/fs/browse?path=${encodeURIComponent(targetPath)}&mode=${mode}`;
+      if (userId) {
+        url += `&userId=${encodeURIComponent(userId)}`;
+      }
+      const res = await authFetch(url);
       if (res.ok) {
         const data: BrowseData = await res.json();
         setBrowseData(data);
         setCurrentPath(data.current_path);
         setPathInput(data.current_path);
       } else {
+        let errorMsg = `HTTP error ${res.status}`;
+        try {
+          const errData = await res.json();
+          if (errData?.message) errorMsg = errData.message;
+        } catch {}
         setBrowseData((prev) => ({
           current_path: targetPath,
           parent_path: null,
           shortcuts: prev?.shortcuts || [],
           directories: [],
           files: [],
-          error: `HTTP error ${res.status}`,
+          error: errorMsg,
         }));
       }
     } catch (err: any) {
@@ -67,7 +87,7 @@ export default function DirectoryBrowserModal({
     } finally {
       setLoading(false);
     }
-  }, [mode]);
+  }, [mode, userId, authFetch]);
 
   useEffect(() => {
     if (isOpen) {
@@ -225,6 +245,49 @@ export default function DirectoryBrowserModal({
             &times;
           </button>
         </div>
+
+        {/* User Workspace Indicator Banner */}
+        {(userLabel || userId || browseData?.user_workspace) && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '8px',
+              padding: '0.45rem 0.75rem',
+              margin: '0.25rem 0 0.5rem 0',
+              background: 'rgba(99, 102, 241, 0.12)',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+              borderRadius: '6px',
+              fontSize: '0.82rem',
+              color: '#c7d2fe',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>👤</span>
+              <span>
+                <strong>User Workspace:</strong>{' '}
+                {userLabel || browseData?.user_workspace?.userId || userId}
+              </span>
+            </div>
+            {browseData?.user_workspace?.rootDir && (
+              <span
+                style={{
+                  fontFamily: 'monospace',
+                  fontSize: '0.75rem',
+                  opacity: 0.85,
+                  maxWidth: '300px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={browseData.user_workspace.rootDir}
+              >
+                Root: {browseData.user_workspace.rootDir}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Quick Location Shortcuts */}
         {browseData?.shortcuts && browseData.shortcuts.length > 0 && (

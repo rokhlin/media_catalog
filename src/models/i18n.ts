@@ -312,6 +312,17 @@ export interface SettingsTranslations {
   cacheRecacheSuccess?: string;
   cacheClearSuccess?: string;
   cacheSaveStrategySuccess?: string;
+  cacheMaintenanceTitle?: string;
+  cacheMaintenanceDesc?: string;
+  btnPruneFoldersCache?: string;
+  btnPruningFolders?: string;
+  btnResetAllData?: string;
+  btnResettingAllData?: string;
+  confirmResetAllData?: string;
+  pruneFoldersSuccess?: string;
+  resetAllDataSuccess?: string;
+  pruneFoldersError?: string;
+  resetAllDataError?: string;
   tabPaths: string;
   tabModels: string;
   tabPreferences: string;

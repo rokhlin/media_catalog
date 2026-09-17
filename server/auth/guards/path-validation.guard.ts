@@ -83,10 +83,19 @@ export class PathValidationGuard implements CanActivate {
         if (!candidate.includes('/') && !candidate.includes('\\')) {
           continue;
         }
+
+        // Administrators with admin role or admin_panel permission have system-wide storage authority
+        // (can configure, browse, and catalog any host drive e.g. Z:\, D:\, network shares)
+        if (user.role === 'admin' || (Array.isArray(user.permissions) && user.permissions.includes('admin_panel'))) {
+          continue;
+        }
+
         const userId = user.sub;
         const customRoot = user.root_folder_path || user.rootPath;
-        const isValid = this.workspaceService.validatePathInWorkspace(userId, candidate, customRoot);
-        if (!isValid) {
+        const isValidInWorkspace = this.workspaceService.validatePathInWorkspace(userId, candidate, customRoot);
+        const isValidInSharedMedia = this.workspaceService.isPathInConfiguredFolders?.(candidate);
+
+        if (!isValidInWorkspace && !isValidInSharedMedia) {
           throw new ForbiddenException(
             `Access denied: Path '${candidate}' is outside the authorized user workspace.`
           );

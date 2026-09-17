@@ -237,6 +237,7 @@ export class AuthService {
       passwordSalt: salt,
       role: dto.role,
       permissions,
+      root_folder_path: dto.root_folder_path || undefined,
     });
 
     return this.getUserById(created.id);
@@ -256,6 +257,7 @@ export class AuthService {
     } else if (dto.role && dto.role !== existing.role) {
       updates.permissions = DEFAULT_ROLE_PERMISSIONS[dto.role] || DEFAULT_ROLE_PERMISSIONS.viewer;
     }
+    if (dto.root_folder_path !== undefined) updates.root_folder_path = dto.root_folder_path;
 
     if (dto.password && dto.password.trim().length > 0) {
       const { hash, salt } = this.hashPassword(dto.password);

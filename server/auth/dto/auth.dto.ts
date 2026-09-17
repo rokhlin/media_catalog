@@ -40,6 +40,11 @@ export class CreateUserDto {
   @IsArray()
   @IsOptional()
   permissions?: string[];
+
+  @ApiPropertyOptional({ description: 'Custom workspace root directory', example: 'C:\\Workspaces\\jane' })
+  @IsString()
+  @IsOptional()
+  root_folder_path?: string;
 }
 
 export class UpdateUserDto {
@@ -64,6 +69,11 @@ export class UpdateUserDto {
   @IsArray()
   @IsOptional()
   permissions?: string[];
+
+  @ApiPropertyOptional({ description: 'Custom workspace root directory', example: 'C:\\Workspaces\\jane' })
+  @IsString()
+  @IsOptional()
+  root_folder_path?: string;
 }
 
 export class ChangePasswordDto {

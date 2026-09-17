@@ -21,6 +21,12 @@ export interface DirectoryBrowseResult {
   directories: string[];
   files: string[];
   error?: string;
+  user_workspace?: {
+    userId: string;
+    rootDir: string;
+    mediaDir: string;
+    catalogDir: string;
+  } | null;
 }
 
 @Injectable()
@@ -119,8 +125,11 @@ export class SettingsService {
       const normCleaned = new Set(cleanedInputs.map((p) => p.toLowerCase().replace(/\\/g, '/')));
       const removedFolders = previousInputs.filter((p) => !normCleaned.has(p.toLowerCase().replace(/\\/g, '/')));
 
-      if (removedFolders.length > 0) {
-        this.mediaService.recalculateCacheAfterFolderChange({ removedFolders });
+      if (removedFolders.length > 0 || cleanedInputs.length < previousInputs.length) {
+        this.logger.log(`Input folders changed (previous=${previousInputs.length}, current=${cleanedInputs.length}). Triggering cache pruning task.`);
+        this.mediaService.pruneDisconnectedFolders(removedFolders.length > 0 ? removedFolders : undefined).catch((err) => {
+          this.logger.warn(`Failed automatic folder pruning on settings update: ${err.message}`);
+        });
       }
     }
 
@@ -140,32 +149,81 @@ export class SettingsService {
     };
   }
 
-  getShortcuts(): Array<{ label: string; path: string }> {
+  getShortcuts(user?: any, targetUserId?: string): Array<{ label: string; path: string }> {
     const shortcuts: Array<{ label: string; path: string }> = [];
 
-    // Project root shortcut
-    shortcuts.push({ label: 'Project Root', path: this.config.projectRoot });
-
-    if (this.config.isDev && os.platform() === 'win32') {
-      const drives = ['C:\\', 'D:\\', 'E:\\', 'F:\\', 'Z:\\'];
-      for (const drive of drives) {
-        try {
-          if (fs.existsSync(drive)) {
-            shortcuts.push({ label: drive, path: drive });
-          }
-        } catch {
-          // ignore
+    // 1. User Workspace shortcuts (for target user or current user)
+    const effectiveUserId = targetUserId || user?.sub || user?.id;
+    if (effectiveUserId && this.workspaceService) {
+      try {
+        let customRoot: string | undefined = user?.root_folder_path;
+        if (targetUserId) {
+          const targetUserObj = this.db.getUserById(targetUserId);
+          customRoot = targetUserObj?.root_folder_path || undefined;
         }
-      }
-    } else {
-      const candidates = ['/app/media_input', '/app/media_output', '/app/data/config', '/shares', '/media', '/mnt', '/data', '/app', '/home', '/'];
-      for (const cand of candidates) {
-        try {
-          if (fs.existsSync(cand)) {
-            shortcuts.push({ label: cand, path: cand });
+        const ws = this.workspaceService.getUserWorkspace(effectiveUserId, customRoot);
+        if (ws) {
+          if (fs.existsSync(ws.rootDir)) {
+            shortcuts.push({ label: '👤 User Workspace', path: ws.rootDir });
           }
-        } catch {
-          // ignore
+          if (fs.existsSync(ws.mediaDir)) {
+            shortcuts.push({ label: '🖼️ User Media', path: ws.mediaDir });
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`Could not resolve workspace shortcuts for ${effectiveUserId}: ${err}`);
+      }
+    }
+
+    // 2. Active configured input folders
+    if (this.config.inputFolders && this.config.inputFolders.length > 0) {
+      for (const folder of this.config.inputFolders) {
+        try {
+          if (fs.existsSync(folder)) {
+            shortcuts.push({ label: `📂 ${path.basename(folder) || folder}`, path: folder });
+          }
+        } catch {}
+      }
+    }
+
+    // 3. Configured output folder
+    if (this.config.outputFolder) {
+      try {
+        if (fs.existsSync(this.config.outputFolder)) {
+          shortcuts.push({ label: `📦 Output Folder`, path: this.config.outputFolder });
+        }
+      } catch {}
+    }
+
+    // 4. Admin or Host storage drives
+    const isAdmin = !user || user.role === 'admin' || (Array.isArray(user.permissions) && user.permissions.includes('admin_panel'));
+    if (isAdmin) {
+      if (this.config.usersBaseDir && fs.existsSync(this.config.usersBaseDir)) {
+        shortcuts.push({ label: '👥 User Workspaces Base', path: this.config.usersBaseDir });
+      }
+
+      if (this.config.projectRoot && fs.existsSync(this.config.projectRoot)) {
+        shortcuts.push({ label: 'Project Root', path: this.config.projectRoot });
+      }
+
+      if (process.platform === 'win32') {
+        const driveLetters = ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
+        for (const letter of driveLetters) {
+          const drive = `${letter}:\\`;
+          try {
+            if (fs.existsSync(drive)) {
+              shortcuts.push({ label: `Drive (${drive})`, path: drive });
+            }
+          } catch {}
+        }
+      } else {
+        const candidates = ['/app/media_input', '/app/media_output', '/app/data/config', '/shares', '/media', '/mnt', '/data', '/app', '/home', '/'];
+        for (const cand of candidates) {
+          try {
+            if (fs.existsSync(cand)) {
+              shortcuts.push({ label: cand, path: cand });
+            }
+          } catch {}
         }
       }
     }
@@ -173,12 +231,37 @@ export class SettingsService {
     return shortcuts;
   }
 
-  browseDirectory(targetPath?: string, mode: 'folder' | 'file' = 'folder'): DirectoryBrowseResult {
-    const shortcuts = this.getShortcuts();
+  browseDirectory(
+    targetPath?: string,
+    mode: 'folder' | 'file' = 'folder',
+    user?: any,
+    targetUserId?: string,
+  ): DirectoryBrowseResult {
+    const shortcuts = this.getShortcuts(user, targetUserId);
     let current = targetPath ? targetPath.trim() : '';
 
+    let userWs: any = null;
+    const effectiveUserId = targetUserId || user?.sub || user?.id;
+    if (effectiveUserId && this.workspaceService) {
+      try {
+        let customRoot: string | undefined = user?.root_folder_path;
+        if (targetUserId) {
+          const targetUserObj = this.db.getUserById(targetUserId);
+          customRoot = targetUserObj?.root_folder_path || undefined;
+        }
+        userWs = this.workspaceService.getUserWorkspace(effectiveUserId, customRoot);
+      } catch {}
+    }
+
     if (!current) {
-      current = this.config.projectRoot;
+      // If target user specified or non-admin user: default to their workspace
+      if (userWs && (targetUserId || (user && user.role !== 'admin'))) {
+        current = userWs.rootDir;
+      } else if (this.config.inputFolders && this.config.inputFolders.length > 0) {
+        current = this.config.inputFolders[0];
+      } else {
+        current = this.config.projectRoot;
+      }
     }
 
     // In non-dev builds (e.g. Docker container), map Windows UNC or drive paths to container volume mount points
@@ -210,6 +293,14 @@ export class SettingsService {
           directories: [],
           files: [],
           error: `Path does not exist: ${current}`,
+          user_workspace: userWs
+            ? {
+                userId: userWs.userId,
+                rootDir: userWs.rootDir,
+                mediaDir: userWs.mediaDir,
+                catalogDir: userWs.catalogDir,
+              }
+            : null,
         };
       }
 
@@ -245,6 +336,14 @@ export class SettingsService {
         shortcuts,
         directories,
         files,
+        user_workspace: userWs
+          ? {
+              userId: userWs.userId,
+              rootDir: userWs.rootDir,
+              mediaDir: userWs.mediaDir,
+              catalogDir: userWs.catalogDir,
+            }
+          : null,
       };
     } catch (err: any) {
       this.logger.warn(`Failed to browse directory ${current}: ${err.message}`);
@@ -255,6 +354,14 @@ export class SettingsService {
         directories: [],
         files: [],
         error: err.message || 'Cannot access directory',
+        user_workspace: userWs
+          ? {
+              userId: userWs.userId,
+              rootDir: userWs.rootDir,
+              mediaDir: userWs.mediaDir,
+              catalogDir: userWs.catalogDir,
+            }
+          : null,
       };
     }
   }

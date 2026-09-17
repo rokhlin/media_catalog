@@ -60,5 +60,15 @@
     "typescript": "^5.7.3",
     "vite": "^8.2.0"
   },
-  "description": "Modern Web UI, Family Tree Explorer, Media Viewer & REST Server for Media Archive Cataloger"
+  "overrides": {
+    "multer": "^2.4.0"
+  },
+  "description": "Modern Web UI, Family Tree Explorer, Media Viewer & REST Server for Media Archive Cataloger",
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true,
+    "esbuild@0.28.2": true,
+    "@google/genai@2.21.0": true,
+    "@scarf/scarf@1.4.0": true,
+    "protobufjs@7.6.6": true
+  }
 }

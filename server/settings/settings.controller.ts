@@ -28,20 +28,29 @@ export class SettingsController {
     return this.settingsService.updateSettings(body);
   }
 
+  @Public()
   @Get('fs/browse')
-  @RequirePermissions('admin_panel')
   @ApiOperation({ summary: 'Browse host filesystem directories and files for selection' })
   @ApiQuery({ name: 'path', required: false, type: String })
   @ApiQuery({ name: 'mode', required: false, enum: ['folder', 'file'] })
-  browseDirectoryGet(@Query('path') targetPath?: string, @Query('mode') mode?: 'folder' | 'file') {
-    return this.settingsService.browseDirectory(targetPath, mode);
+  @ApiQuery({ name: 'userId', required: false, type: String })
+  browseDirectoryGet(
+    @Req() req: any,
+    @Query('path') targetPath?: string,
+    @Query('mode') mode?: 'folder' | 'file',
+    @Query('userId') targetUserId?: string,
+  ) {
+    return this.settingsService.browseDirectory(targetPath, mode, req?.user, targetUserId);
   }
 
+  @Public()
   @Post('fs/browse')
-  @RequirePermissions('admin_panel')
   @ApiOperation({ summary: 'Browse host filesystem directories and files via POST' })
-  browseDirectoryPost(@Body() body: { path?: string; mode?: 'folder' | 'file' }) {
-    return this.settingsService.browseDirectory(body?.path, body?.mode);
+  browseDirectoryPost(
+    @Req() req: any,
+    @Body() body: { path?: string; mode?: 'folder' | 'file'; userId?: string },
+  ) {
+    return this.settingsService.browseDirectory(body?.path, body?.mode, req?.user, body?.userId);
   }
 
   @Post('select-folder')

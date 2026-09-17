@@ -310,7 +310,7 @@ export class MediaCacheService {
       const itemPath = (item?.file_path || key).replace(/\\/g, '/').toLowerCase();
       const itemFolder = (item?.folder || '').replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
 
-      const matches = normFolders.some((rf) => itemPath.startsWith(rf + '/') || itemFolder === rf);
+      const matches = normFolders.some((rf) => itemPath.startsWith(rf + '/') || itemFolder === rf || itemFolder.startsWith(rf + '/'));
       if (matches) {
         this.cache.delete(key);
         removedCount++;

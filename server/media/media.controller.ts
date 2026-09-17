@@ -168,6 +168,24 @@ export class MediaController {
     return { status: 'success', message: 'Cache cleared successfully' };
   }
 
+  @Post('cache/prune-folders')
+  @ApiOperation({ summary: 'Prune disconnected or removed folders from cache and database' })
+  async pruneDisconnectedFolders(@Body() body?: { removed_folders?: string[] }) {
+    return this.mediaService.pruneDisconnectedFolders(body?.removed_folders);
+  }
+
+  @Post('cache/reset-all')
+  @ApiOperation({ summary: 'Complete clean-slate reset of all catalog data, thumbnails, and cache' })
+  async resetAllData() {
+    return this.mediaService.resetAllData();
+  }
+
+  @Get('cache/task-status')
+  @ApiOperation({ summary: 'Get current or last active cache maintenance task status' })
+  async getCacheTaskStatus() {
+    return this.mediaService.getActiveCacheTask();
+  }
+
   @Get('cache-strategy')
   @ApiOperation({ summary: 'Get cache strategy configuration and execution metrics' })
   async getCacheStrategy() {

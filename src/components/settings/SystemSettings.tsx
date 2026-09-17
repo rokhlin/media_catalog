@@ -201,7 +201,8 @@ export default function SystemSettings({
   const [cacheStatus, setCacheStatus] = useState<any>(null);
   const [cacheSelectedFolder, setCacheSelectedFolder] = useState<string>('');
   const [isRecaching, setIsRecaching] = useState<boolean>(false);
-  const [isClearingCache, setIsClearingCache] = useState<boolean>(false);
+  const [isPruningFolders, setIsPruningFolders] = useState<boolean>(false);
+  const [isResettingAll, setIsResettingAll] = useState<boolean>(false);
   const [isSavingCacheStrategy, setIsSavingCacheStrategy] = useState<boolean>(false);
   const [cacheFeedback, setCacheFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [dailyAutomationEnabled, setDailyAutomationEnabled] = useState<boolean>(true);
@@ -246,21 +247,87 @@ export default function SystemSettings({
     }
   };
 
-  const handleClearCache = async () => {
-    if (!window.confirm(t('confirmClearCache' as any) || 'Are you sure you want to clear media cache?')) return;
-    setIsClearingCache(true);
+  const handlePruneDisconnectedFolders = async () => {
+    setIsPruningFolders(true);
     setCacheFeedback(null);
     try {
-      await fetch('/api/media/cache/clear', { method: 'POST' });
-      await mediaCacheService.clear();
-      setCacheFeedback({ type: 'success', message: t('cacheClearSuccess' as any) || 'Cache cleared successfully.' });
+      const res = await fetch('/api/media/cache/prune-folders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.message || (t('pruneFoldersError' as any) || 'Failed pruning folders'));
+      }
+
+      // Prune client IndexedDB cache
+      if (data.removed_folders && data.removed_folders.length > 0) {
+        await mediaCacheService.removeFolders(data.removed_folders);
+      }
+      const currentConfigured = (formData.input_folders || []).filter(Boolean);
+      const allCached = mediaCacheService.getAll();
+      const normConfigured = currentConfigured.map((f) => f.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, ''));
+      const orphanedKeys = allCached
+        .filter((it) => {
+          const itPath = (it.file_path || '').replace(/\\/g, '/').toLowerCase();
+          const itFolder = (it.folder || '').replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
+          return !normConfigured.some((cf) => itPath.startsWith(cf + '/') || itFolder === cf || itFolder.startsWith(cf + '/'));
+        })
+        .map((it) => it.file_path || it.filename);
+
+      if (orphanedKeys.length > 0) {
+        await mediaCacheService.removeFiles(orphanedKeys);
+      }
+
+      const countMsg = data.deleted_files_count !== undefined ? ` (${data.deleted_files_count} files)` : '';
+      setCacheFeedback({
+        type: 'success',
+        message: `${t('pruneFoldersSuccess' as any) || 'Disconnected folders cache pruned successfully'}${countMsg}`,
+      });
       await loadCacheStatus();
       onRefreshMedia?.();
-      setTimeout(() => setCacheFeedback(null), 4000);
+      setTimeout(() => setCacheFeedback(null), 5000);
     } catch (err: any) {
-      setCacheFeedback({ type: 'error', message: err.message || 'Clear cache failed' });
+      setCacheFeedback({ type: 'error', message: err.message || (t('pruneFoldersError' as any) || 'Pruning failed') });
     } finally {
-      setIsClearingCache(false);
+      setIsPruningFolders(false);
+    }
+  };
+
+  const handleResetAllData = async () => {
+    const confirmed = window.confirm(
+      t('confirmResetAllData' as any) ||
+        'Are you sure you want to reset all data and cache? All indexed media records, metadata, faces, sync history, and cached thumbnails will be permanently wiped (clean slate installation). Your original media files will NOT be deleted.'
+    );
+    if (!confirmed) return;
+
+    setIsResettingAll(true);
+    setCacheFeedback(null);
+    try {
+      const res = await fetch('/api/media/cache/reset-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.message || (t('resetAllDataError' as any) || 'Reset failed'));
+      }
+
+      // Completely clear client-side IndexedDB cache
+      await mediaCacheService.clear();
+
+      setCacheFeedback({
+        type: 'success',
+        message: t('resetAllDataSuccess' as any) || 'All catalog data, thumbnails, and cache successfully reset.',
+      });
+      await loadCacheStatus();
+      onRefreshMedia?.();
+      setTimeout(() => setCacheFeedback(null), 5000);
+    } catch (err: any) {
+      setCacheFeedback({ type: 'error', message: err.message || (t('resetAllDataError' as any) || 'Reset failed') });
+    } finally {
+      setIsResettingAll(false);
     }
   };
 
@@ -786,6 +853,69 @@ export default function SystemSettings({
                   {scanProgress?.is_scanning
                     ? `Indexing: ${scanProgress.current_filename || scanProgress.current_file || 'reading folders...'} (${scanProgress.scanned_count || 0} files)`
                     : reindexMessage}
+                </div>
+              )}
+            </div>
+
+            {/* Cache & Database Maintenance Action Card */}
+            <div
+              className="card"
+              style={{
+                marginTop: '1.25rem',
+                background: 'rgba(0, 0, 0, 0.22)',
+                borderRadius: '12px',
+                padding: '1.25rem',
+                border: '1px solid var(--border-color)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.5rem' }}>
+                <span style={{ fontSize: '1.2rem' }}>🧹</span>
+                <strong style={{ fontSize: '1rem' }}>{t('cacheMaintenanceTitle' as any) || 'Cache & Database Maintenance'}</strong>
+              </div>
+              <p className="description" style={{ marginBottom: '1rem' }}>
+                {t('cacheMaintenanceDesc' as any) ||
+                  'Prune cached items and thumbnails belonging to disconnected/removed folders, or completely wipe catalog data for a clean slate.'}
+              </p>
+
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={isPruningFolders || isResettingAll}
+                  onClick={handlePruneDisconnectedFolders}
+                  id="btn-prune-disconnected-folders-paths"
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <span>{isPruningFolders ? '⏳' : '🧹'}</span>
+                  <span>{isPruningFolders ? (t('btnPruningFolders' as any) || 'Pruning...') : (t('btnPruneFoldersCache' as any) || 'Prune Disconnected Folders')}</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={isPruningFolders || isResettingAll}
+                  onClick={handleResetAllData}
+                  id="btn-reset-all-data-paths"
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <span>{isResettingAll ? '⏳' : '⚠️'}</span>
+                  <span>{isResettingAll ? (t('btnResettingAllData' as any) || 'Resetting...') : (t('btnResetAllData' as any) || 'Reset All Data (Clean Slate)')}</span>
+                </button>
+              </div>
+
+              {cacheFeedback && (
+                <div
+                  style={{
+                    marginTop: '0.85rem',
+                    padding: '0.6rem 0.85rem',
+                    borderRadius: '8px',
+                    fontSize: '0.85rem',
+                    background: cacheFeedback.type === 'success' ? 'rgba(46, 125, 50, 0.2)' : 'rgba(211, 47, 47, 0.2)',
+                    color: cacheFeedback.type === 'success' ? '#81c784' : '#e57373',
+                    border: `1px solid ${cacheFeedback.type === 'success' ? '#2e7d32' : '#d32f2f'}`,
+                  }}
+                >
+                  {cacheFeedback.message}
                 </div>
               )}
             </div>
@@ -1582,13 +1712,24 @@ export default function SystemSettings({
 
                   <button
                     type="button"
-                    className="btn btn-danger"
-                    onClick={handleClearCache}
-                    disabled={isClearingCache || isRecaching || disabled}
-                    id="btn-clear-cache-action"
+                    className="btn btn-secondary"
+                    onClick={handlePruneDisconnectedFolders}
+                    disabled={isPruningFolders || isResettingAll || disabled}
+                    id="btn-prune-disconnected-folders-pref"
                     style={{ padding: '0.65rem 1.15rem' }}
                   >
-                    {isClearingCache ? '⏳ Clearing...' : `🗑️ ${t('btnClearCache' as any) || 'Clear Cache'}`}
+                    {isPruningFolders ? '⏳ Pruning...' : `🧹 ${t('btnPruneFoldersCache' as any) || 'Prune Folders'}`}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={handleResetAllData}
+                    disabled={isResettingAll || isPruningFolders || disabled}
+                    id="btn-reset-all-data-pref"
+                    style={{ padding: '0.65rem 1.15rem' }}
+                  >
+                    {isResettingAll ? '⏳ Resetting...' : `⚠️ ${t('btnResetAllData' as any) || 'Reset All Data (Clean Slate)'}`}
                   </button>
                 </div>
               </div>

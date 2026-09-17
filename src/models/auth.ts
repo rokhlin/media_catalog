@@ -14,6 +14,7 @@ export interface User {
   displayName: string;
   role: UserRole;
   permissions: Permission[];
+  root_folder_path?: string;
   createdAt?: string;
   updatedAt?: string;
 }
