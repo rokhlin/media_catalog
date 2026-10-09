@@ -14,6 +14,8 @@ import { BackupModule } from './backup/backup.module.js';
 import { OrganizeModule } from './organize/organize.module.js';
 import { GeminiModule } from './gemini/gemini.module.js';
 import { WorkspaceModule } from './workspace/workspace.module.js';
+import { ScheduleModule } from '@nestjs/schedule';
+import { ScannerModule } from './scanner/scanner.module.js';
 
 @Module({
   imports: [
@@ -32,6 +34,8 @@ import { WorkspaceModule } from './workspace/workspace.module.js';
     BackupModule,
     OrganizeModule,
     GeminiModule,
+    ScheduleModule.forRoot(),
+    ScannerModule,
   ],
 })
 export class AppModule {}
