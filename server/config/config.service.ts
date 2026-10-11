@@ -449,7 +449,7 @@ export class AppConfigService {
 
   get geminiModel(): string {
     const saved = this.getSavedSettings();
-    return saved.GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+    return saved.GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-3.8-flash';
   }
 
   get geminiRpmLimit(): number {

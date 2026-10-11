@@ -76,7 +76,7 @@ describe('CatalogerClientService', () => {
       getPipelineExecutionConfig: () => ({
         output_folder: tmpDir,
         model_provider: 'gemini',
-        gemini_model: 'gemini-3.6-flash',
+        gemini_model: 'gemini-3.8-flash',
         ui_base_url: 'http://localhost:8000',
       }),
     } as any;

@@ -17,7 +17,7 @@ export class SettingsUpdateRequestDto {
   @IsString()
   model_provider?: string;
 
-  @ApiPropertyOptional({ description: 'Gemini Model Name', example: 'gemini-3.6-flash' })
+  @ApiPropertyOptional({ description: 'Gemini Model Name', example: 'gemini-3.8-flash' })
   @IsOptional()
   @IsString()
   gemini_model?: string;

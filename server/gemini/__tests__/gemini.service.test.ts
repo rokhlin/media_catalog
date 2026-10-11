@@ -39,7 +39,7 @@ describe('Gemini Integration on Web Backend', () => {
     Object.defineProperty(configService, 'projectRoot', { value: tempDir });
     Object.defineProperty(configService, 'outputFolder', { value: path.join(tempDir, 'output') });
     Object.defineProperty(configService, 'geminiApiKey', { value: 'test-api-key-12345' });
-    Object.defineProperty(configService, 'geminiModel', { value: 'gemini-3.6-flash' });
+    Object.defineProperty(configService, 'geminiModel', { value: 'gemini-3.8-flash' });
     Object.defineProperty(configService, 'geminiRpmLimit', { value: 15 });
     Object.defineProperty(configService, 'imageMaxSize', { value: 1000 });
 
@@ -126,7 +126,7 @@ describe('Gemini Integration on Web Backend', () => {
       const status = service.getStatus();
 
       assert.strictEqual(status.configured, true);
-      assert.strictEqual(status.model, 'gemini-3.6-flash');
+      assert.strictEqual(status.model, 'gemini-3.8-flash');
       assert.strictEqual(status.rpm_limit, 15);
       assert.strictEqual(status.provider, 'gemini');
     });
@@ -164,7 +164,7 @@ describe('Gemini Integration on Web Backend', () => {
       assert.strictEqual(res.ok, true);
       assert.ok(res.message.includes('Connection successful'));
       assert.strictEqual(typeof res.latencyMs, 'number');
-      assert.strictEqual(res.model, 'gemini-3.6-flash');
+      assert.strictEqual(res.model, 'gemini-3.8-flash');
     });
 
     it('should catch and sanitize connection failure with friendly message', async () => {

@@ -62,7 +62,7 @@ export class SettingsService {
       is_custom_output: Boolean(saved.OUTPUT_FOLDER || saved.output_folder),
       is_dev: this.config.isDev,
       model_provider: saved.MODEL_PROVIDER || process.env.MODEL_PROVIDER || 'gemini',
-      gemini_model: saved.GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-3.6-flash',
+      gemini_model: saved.GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-3.8-flash',
       gemini_api_key: '',
       gemini_api_key_masked: this.config.geminiApiKeyMasked,
       is_gemini_api_key_set: Boolean(this.config.geminiApiKey),

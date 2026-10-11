@@ -23,6 +23,7 @@
     "@nestjs/config": "^4.0.0",
     "@nestjs/core": "^11.0.10",
     "@nestjs/platform-express": "^11.0.10",
+    "@nestjs/schedule": "^12.0.2",
     "@nestjs/swagger": "^11.0.4",
     "@types/adm-zip": "^0.5.8",
     "@types/cron": "^2.0.1",
@@ -44,7 +45,8 @@
     "react-dom": "^19.2.8",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "sharp": "^0.35.4"
+    "sharp": "^0.35.4",
+    "xxhash-wasm": "^1.1.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
