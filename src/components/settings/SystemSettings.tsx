@@ -374,7 +374,7 @@ export default function SystemSettings({
         input_folders: settings.input_folders ? [...settings.input_folders] : [],
         output_folder: settings.output_folder || '',
         model_provider: settings.model_provider || 'gemini',
-        gemini_model: settings.gemini_model || 'gemini-3.6-flash',
+        gemini_model: settings.gemini_model || 'gemini-3.8-flash',
         gemini_api_key: settings.gemini_api_key || '',
         is_gemini_api_key_set: settings.is_gemini_api_key_set,
         local_model_name: settings.local_model_name || '',
@@ -509,7 +509,7 @@ export default function SystemSettings({
         input_folders: [],
         output_folder: '',
         model_provider: 'gemini',
-        gemini_model: 'gemini-1.5-flash',
+        gemini_model: 'gemini-3.8-flash',
         local_model_name: '',
         whisper_model: 'base',
         preserve_structure: true,
@@ -998,11 +998,11 @@ export default function SystemSettings({
                       value={formData.gemini_model}
                       onChange={(e) => handleInputChange('gemini_model', e.target.value)}
                     >
-                      <option value="gemini-3.6-flash">gemini-3.6-flash (Fast & Recommended)</option>
-                      <option value="gemini-2.5-flash">gemini-2.5-flash (Balanced)</option>
-                      <option value="gemini-2.5-pro">gemini-2.5-pro (High Reasoning)</option>
-                      <option value="gemini-1.5-flash">gemini-1.5-flash (Legacy Fast)</option>
-                      <option value="gemini-1.5-pro">gemini-1.5-pro (Legacy Precision)</option>
+                      <option value="gemini-3.8-flash">gemini-3.8-flash (Fast & Recommended)</option>
+                      <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Balanced)</option>
+                      <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (High Reasoning)</option>
+                      <option value="gemini-3.8-flash">gemini-3.8-flash (Legacy Fast)</option>
+                      <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Legacy Precision)</option>
                     </select>
                   </div>
 

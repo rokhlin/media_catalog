@@ -38,7 +38,7 @@ export default function AdminGeminiTab() {
   const [maskedKey, setMaskedKey] = useState('');
 
   const [modelProvider, setModelProvider] = useState('gemini');
-  const [geminiModel, setGeminiModel] = useState('gemini-3.6-flash');
+  const [geminiModel, setGeminiModel] = useState('gemini-3.8-flash');
   const [isCustomModel, setIsCustomModel] = useState(false);
   const [customModelName, setCustomModelName] = useState('');
   const [rpmLimit, setRpmLimit] = useState(15);
@@ -53,11 +53,11 @@ export default function AdminGeminiTab() {
 
   // Preset models
   const KNOWN_MODELS = [
-    { id: 'gemini-3.6-flash', label: 'gemini-3.6-flash (Recommended · SOTA Vision & Tagging)' },
-    { id: 'gemini-2.5-flash', label: 'gemini-2.5-flash (Fast & Efficient Multimodal)' },
-    { id: 'gemini-2.5-pro', label: 'gemini-2.5-pro (High Reasoning & Detailed Analysis)' },
-    { id: 'gemini-1.5-flash', label: 'gemini-1.5-flash (Legacy Fast)' },
-    { id: 'gemini-1.5-pro', label: 'gemini-1.5-pro (Legacy Precision)' },
+    { id: 'gemini-3.8-flash', label: 'gemini-3.8-flash (Recommended · SOTA Vision & Tagging)' },
+    { id: 'gemini-3.5-flash-lite', label: 'gemini-3.5-flash-lite (Fast & Efficient Multimodal)' },
+    { id: 'gemini-3.1-pro-preview', label: 'gemini-3.1-pro-preview (High Reasoning & Detailed Analysis)' },
+    { id: 'gemini-3.8-flash', label: 'gemini-3.8-flash (Legacy Fast)' },
+    { id: 'gemini-3.1-pro-preview', label: 'gemini-3.1-pro-preview (Legacy Precision)' },
     { id: 'custom', label: 'Custom Model Name...' },
   ];
 
@@ -80,7 +80,7 @@ export default function AdminGeminiTab() {
         setMaskedKey(data.gemini_api_key_masked || '');
         setModelProvider(data.model_provider || 'gemini');
 
-        const model = data.gemini_model || 'gemini-3.6-flash';
+        const model = data.gemini_model || 'gemini-3.8-flash';
         const isKnown = KNOWN_MODELS.some((m) => m.id === model);
         if (isKnown) {
           setGeminiModel(model);
@@ -128,7 +128,7 @@ export default function AdminGeminiTab() {
     }
   };
 
-  const effectiveModelName = isCustomModel ? (customModelName.trim() || 'gemini-3.6-flash') : geminiModel;
+  const effectiveModelName = isCustomModel ? (customModelName.trim() || 'gemini-3.8-flash') : geminiModel;
 
   // Validate Connection
   const handleValidate = async () => {
@@ -529,7 +529,7 @@ export default function AdminGeminiTab() {
                   className="input-control"
                   value={customModelName}
                   onChange={(e) => setCustomModelName(e.target.value)}
-                  placeholder="e.g. gemini-2.0-flash-exp"
+                  placeholder="e.g. gemini-3.8-flash"
                   id="input-gemini-custom-model"
                   style={{ marginTop: '0.5rem', width: '100%' }}
                 />

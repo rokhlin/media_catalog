@@ -261,7 +261,7 @@ export class GeminiService {
 
     await this.rateLimiter.acquire();
 
-    const modelName = this.config.geminiModel || 'gemini-3.6-flash';
+    const modelName = this.config.geminiModel || 'gemini-3.8-flash';
     this.logger.log(`Calling Gemini API (${modelName}) for photo: ${path.basename(imagePath)}`);
     this.logBuffer?.info('Gemini', `Analyzing photo '${path.basename(imagePath)}' with model ${modelName}`);
 
@@ -370,7 +370,7 @@ export class GeminiService {
       );
 
       await this.rateLimiter.acquire();
-      const modelName = this.config.geminiModel || 'gemini-3.6-flash';
+      const modelName = this.config.geminiModel || 'gemini-3.8-flash';
       this.logger.log(`Calling Gemini API (${modelName}) for video: ${filename}`);
 
       const response = await client.models.generateContent({
@@ -431,7 +431,7 @@ export class GeminiService {
     contents.push(prompt);
 
     await this.rateLimiter.acquire();
-    const modelName = this.config.geminiModel || 'gemini-3.6-flash';
+    const modelName = this.config.geminiModel || 'gemini-3.8-flash';
     this.logger.log(`Evaluating burst duplicates (${imagePaths.length} items) via Gemini API...`);
 
     const response = await client.models.generateContent({
@@ -595,7 +595,7 @@ export class GeminiService {
 
   public async validateConnection(apiKey?: string, model?: string): Promise<GeminiValidationResult> {
     const rawKey = (apiKey && apiKey.trim()) || this.config.geminiApiKey;
-    const effectiveModel = (model && model.trim()) || this.config.geminiModel || 'gemini-3.6-flash';
+    const effectiveModel = (model && model.trim()) || this.config.geminiModel || 'gemini-3.8-flash';
     const timestamp = new Date().toISOString();
 
     if (!rawKey) {
@@ -664,7 +664,7 @@ export class GeminiService {
       configured: hasKey,
       is_gemini_api_key_set: hasKey,
       gemini_api_key_masked: this.config.geminiApiKeyMasked,
-      model: this.config.geminiModel || 'gemini-3.6-flash',
+      model: this.config.geminiModel || 'gemini-3.8-flash',
       rpm_limit: this.config.geminiRpmLimit,
       active_slots: this.rateLimiter.getActiveSlots(),
       provider: 'gemini',

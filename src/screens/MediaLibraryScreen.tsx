@@ -561,12 +561,12 @@ export default function MediaLibraryScreen({
                       className="input-control"
                       value={modelSettings.gemini_model || ''}
                       onChange={(e) => setModelSettings({ ...modelSettings, gemini_model: e.target.value })}
-                      placeholder="e.g. gemini-3.6-flash"
+                      placeholder="e.g. gemini-3.8-flash"
                     />
                   ) : (
                     <select
                       className="input-control"
-                      value={modelSettings.gemini_model || 'gemini-3.6-flash'}
+                      value={modelSettings.gemini_model || 'gemini-3.8-flash'}
                       onChange={(e) => {
                         if (e.target.value === '__custom__') {
                           setIsCustomGeminiModel(true);
@@ -575,11 +575,11 @@ export default function MediaLibraryScreen({
                         }
                       }}
                     >
-                      <option value="gemini-3.6-flash">gemini-3.6-flash (Fast & Recommended)</option>
-                      <option value="gemini-2.5-flash">gemini-2.5-flash (Balanced)</option>
-                      <option value="gemini-2.5-pro">gemini-2.5-pro (High Reasoning)</option>
-                      <option value="gemini-1.5-flash">gemini-1.5-flash (Legacy Fast)</option>
-                      {modelSettings.gemini_model && !['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash'].includes(modelSettings.gemini_model) && (
+                      <option value="gemini-3.8-flash">gemini-3.8-flash (Fast & Recommended)</option>
+                      <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Balanced)</option>
+                      <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (High Reasoning)</option>
+                      <option value="gemini-3.8-flash">gemini-3.8-flash (Legacy Fast)</option>
+                      {modelSettings.gemini_model && !['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview', 'gemini-3.8-flash'].includes(modelSettings.gemini_model) && (
                         <option value={modelSettings.gemini_model}>{modelSettings.gemini_model}</option>
                       )}
                       <option value="__custom__">✏️ Custom Model ID...</option>
