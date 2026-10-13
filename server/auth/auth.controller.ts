@@ -36,6 +36,17 @@ export class AuthController {
   }
 
   @Public()
+  @Post('register')
+  @ApiOperation({ summary: 'Register a new user account' })
+  @ApiResponse({ status: 201, description: 'User created and logged in with token' })
+  async register(@Body() dto: CreateUserDto) {
+    const existingUsers = this.authService.listUsers();
+    const role = existingUsers.length === 0 ? 'admin' : (dto.role || 'viewer');
+    const createdUser = this.authService.createUser({ ...dto, role });
+    return this.authService.login(createdUser);
+  }
+
+  @Public()
   @Post('logout')
   @ApiOperation({ summary: 'Log out current session' })
   async logout() {
