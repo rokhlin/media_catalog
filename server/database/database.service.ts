@@ -1640,6 +1640,43 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     return true;
   }
 
+  setPersonPrimaryFace(personNameOrId: string, faceId: string): boolean {
+    const db = this.getDb();
+    const trimmed = (personNameOrId || '').trim();
+    if (!trimmed || !faceId) return false;
+
+    const transaction = db.transaction(() => {
+      // 1. Demote any current primary faces of this person to is_reference = 1
+      db.prepare(`
+        UPDATE face_registry 
+        SET is_reference = 1 
+        WHERE (LOWER(name) = LOWER(?) OR person_id = ?) AND is_reference > 1
+      `).run(trimmed, trimmed);
+
+      db.prepare(`
+        UPDATE media_faces 
+        SET is_reference = 1 
+        WHERE (LOWER(name) = LOWER(?) OR person_id = ?) AND is_reference > 1
+      `).run(trimmed, trimmed);
+
+      // 2. Ensure target face is associated with person and set is_reference = 2 (highest priority)
+      db.prepare(`
+        UPDATE face_registry 
+        SET is_reference = 2, name = COALESCE(NULLIF(name, ''), ?), person_id = COALESCE(person_id, ?)
+        WHERE face_id = ?
+      `).run(trimmed, trimmed, faceId);
+
+      db.prepare(`
+        UPDATE media_faces 
+        SET is_reference = 2, name = COALESCE(NULLIF(name, ''), ?), person_id = COALESCE(person_id, ?)
+        WHERE face_id = ?
+      `).run(trimmed, trimmed, faceId);
+    });
+
+    transaction();
+    return true;
+  }
+
   resetFaceAssignment(faceId: string): boolean {
     const db = this.getDb();
     const defaultName = `face_${faceId.replace(/^face_/, '')}`;

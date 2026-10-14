@@ -161,6 +161,14 @@ export class FacesController {
     return this.facesService.assignGroup(body.face_ids, body.name);
   }
 
+  @Post('set-primary')
+  @RequirePermissions('manage_faces')
+  @ApiOperation({ summary: 'Set the primary representative face/avatar for a person' })
+  async setPrimaryFace(@Body() body: { name?: string; person_id?: string; face_id: string }) {
+    const target = body.name || body.person_id || '';
+    return this.facesService.setPrimaryFace(target, body.face_id);
+  }
+
   @Post('reset')
   @RequirePermissions('manage_faces')
   @ApiOperation({ summary: 'Reset a face assignment back to unassigned candidate' })

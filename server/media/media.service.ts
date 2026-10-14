@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger, Inject, Optional, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, Inject, Optional, OnModuleInit, OnModuleDestroy, forwardRef } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
@@ -7,6 +7,7 @@ import { DatabaseService } from '../database/database.service.js';
 import { FamilyTreePublicService } from '../family-tree/family-tree-public.service.js';
 import { ThumbnailService } from './thumbnail.service.js';
 import { UpdateMediaMetadataDto } from './dto/media.dto.js';
+import { CatalogerClientService } from '../cataloger-client/cataloger.service.js';
 
 export interface ScannedMediaFile {
   filePath: string;
@@ -45,6 +46,7 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
     @Inject(DatabaseService) private readonly db: DatabaseService,
     @Optional() @Inject(FamilyTreePublicService) private readonly familyTreePublicService?: FamilyTreePublicService,
     @Optional() @Inject(ThumbnailService) private readonly thumbnailService?: ThumbnailService,
+    @Optional() @Inject(forwardRef(() => CatalogerClientService)) private readonly catalogerClient?: CatalogerClientService,
   ) {}
 
   private cachedMediaList: any[] | null = null;
@@ -2403,11 +2405,24 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
     this.registerIndexedFile(destPath, targetFolder);
     this.invalidateCache();
 
+    let analysisTriggered = false;
+    if (this.catalogerClient) {
+      try {
+        this.catalogerClient.triggerAnalyzeFile(destPath).catch(err => {
+          this.logger.warn(`Auto-analysis background task for '${safeName}' failed: ${err.message}`);
+        });
+        analysisTriggered = true;
+      } catch (err: any) {
+        this.logger.warn(`Failed to dispatch auto-analysis for '${safeName}': ${err.message}`);
+      }
+    }
+
     return {
       status: 'success',
       message: `File '${safeName}' uploaded successfully and queued for indexing`,
       file_path: destPath,
       filename: safeName,
+      analysis_triggered: analysisTriggered,
     };
   }
 }

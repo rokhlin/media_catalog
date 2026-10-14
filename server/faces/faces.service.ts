@@ -204,6 +204,20 @@ export class FacesService {
     };
   }
 
+  setPrimaryFace(personNameOrId: string, faceId: string) {
+    const trimmed = (personNameOrId || '').trim();
+    if (!trimmed) throw new BadRequestException('Person name or ID cannot be empty.');
+    if (!faceId || !faceId.trim()) throw new BadRequestException('Face ID cannot be empty.');
+
+    this.db.initDb();
+    const ok = this.db.setPersonPrimaryFace(trimmed, faceId.trim());
+    return {
+      status: ok ? 'success' : 'failed',
+      message: `Primary face updated for '${trimmed}' to face '${faceId}'.`,
+      face_id: faceId,
+    };
+  }
+
   resetFace(faceId: string) {
     this.db.initDb();
     const mapping = this.db.getFaceNameMapping();

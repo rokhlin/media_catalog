@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject, BadRequestException, Optional } from '@nestjs/common';
+import { Injectable, Logger, Inject, BadRequestException, Optional, forwardRef } from '@nestjs/common';
 import axios from 'axios';
 import * as http from 'http';
 import * as https from 'https';
@@ -19,7 +19,7 @@ export class CatalogerClientService {
 
   constructor(
     @Inject(AppConfigService) private readonly config: AppConfigService,
-    @Inject(MediaService) private readonly mediaService: MediaService,
+    @Inject(forwardRef(() => MediaService)) private readonly mediaService: MediaService,
     @Inject(DatabaseService) private readonly db: DatabaseService,
     @Inject(LogBufferService) @Optional() private readonly logBuffer?: LogBufferService,
     @Inject(GeminiService) @Optional() private readonly geminiService?: GeminiService,
