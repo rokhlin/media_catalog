@@ -1,5 +1,6 @@
-import { Controller, Get, Post, Patch, Body, Query, Req, Res, Headers, BadRequestException, ForbiddenException, Inject, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiQuery, ApiResponse } from '@nestjs/swagger';
+import { Controller, Get, Post, Patch, Body, Query, Req, Res, Headers, BadRequestException, ForbiddenException, Inject, UseGuards, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiQuery, ApiResponse, ApiConsumes } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -364,5 +365,17 @@ export class MediaController {
   async updateMetadataPatch(@Body() body: UpdateMediaMetadataDto) {
     return this.mediaService.updateMediaMetadata(body);
   }
+
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiOperation({ summary: 'Upload a media file (photo/video) directly to configured input library and trigger indexing' })
+  @ApiConsumes('multipart/form-data')
+  async uploadMediaFile(@UploadedFile() file: any) {
+    if (!file || !file.buffer) {
+      throw new BadRequestException('No media file uploaded or file buffer is empty');
+    }
+    return this.mediaService.uploadAndProcessMediaFile(file.buffer, file.originalname);
+  }
 }
+
 

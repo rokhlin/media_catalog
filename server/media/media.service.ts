@@ -2387,6 +2387,30 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       data: updatedDbRecord,
     };
   }
+
+  async uploadAndProcessMediaFile(buffer: Buffer, originalname: string): Promise<any> {
+    const safeName = path.basename(originalname);
+    let targetFolder = Array.isArray(this.config.inputFolders) && this.config.inputFolders.length > 0 ? this.config.inputFolders[0] : null;
+    if (!targetFolder || !fs.existsSync(targetFolder)) {
+      targetFolder = path.join(this.config.projectRoot || process.cwd(), 'media_input');
+    }
+    if (!fs.existsSync(targetFolder)) {
+      fs.mkdirSync(targetFolder, { recursive: true });
+    }
+    const destPath = path.join(targetFolder, safeName);
+    fs.writeFileSync(destPath, buffer);
+
+    this.registerIndexedFile(destPath, targetFolder);
+    this.invalidateCache();
+
+    return {
+      status: 'success',
+      message: `File '${safeName}' uploaded successfully and queued for indexing`,
+      file_path: destPath,
+      filename: safeName,
+    };
+  }
 }
+
 
 

@@ -51,14 +51,14 @@ export class DuplicatesController {
 
   @Get('groups')
   @ApiOperation({ summary: 'Get list of detected duplicate and similarity groups' })
-  getGroups() {
-    return this.duplicatesService.getGroups();
+  async getGroups() {
+    return await this.duplicatesService.getGroups();
   }
 
   @Get('summary')
   @ApiOperation({ summary: 'Get aggregate summary statistics of detected duplicates' })
-  getSummary() {
-    return this.duplicatesService.getSummary();
+  async getSummary() {
+    return await this.duplicatesService.getSummary();
   }
 
   @Get('config')

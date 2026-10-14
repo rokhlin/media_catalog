@@ -131,7 +131,17 @@ export class DuplicatesService {
     return saved;
   }
 
-  getGroups(): DuplicateGroup[] {
+  async getGroups(): Promise<DuplicateGroup[]> {
+    if (!this.cachedGroups || this.cachedGroups.length === 0) {
+      try {
+        const groups = await this.getDuplicateGroups();
+        if (groups && groups.length > 0) {
+          this.cachedGroups = groups;
+        }
+      } catch (err) {
+        this.logger.warn(`Failed to auto-cluster duplicate groups: ${err}`);
+      }
+    }
     return this.cachedGroups;
   }
 
@@ -180,8 +190,10 @@ export class DuplicatesService {
     );
   }
 
-  getSummary(): DuplicateSummary {
-    if (this.lastSummary) return this.lastSummary;
+  async getSummary(): Promise<DuplicateSummary> {
+    if (!this.cachedGroups || this.cachedGroups.length === 0) {
+      await this.getGroups();
+    }
 
     let totalDupFiles = 0;
     let totalReclaimable = 0;
@@ -197,6 +209,8 @@ export class DuplicatesService {
       else if (g.matchType === 'burst') burstCount++;
     }
 
+    const rawHashes = this.db.getAllMediaHashes();
+
     return {
       totalGroups: this.cachedGroups.length,
       totalDuplicateFiles: totalDupFiles,
@@ -204,9 +218,9 @@ export class DuplicatesService {
       exactGroupsCount: exactCount,
       visualGroupsCount: visualCount,
       burstGroupsCount: burstCount,
-      scannedFilesCount: this.scanStatus.total || 0,
-      lastScanTime: this.scanStatus.startedAt ? new Date(this.scanStatus.startedAt).toISOString() : null,
-      engineUsed: this.scanStatus.engine || 'idle',
+      scannedFilesCount: rawHashes.length,
+      lastScanTime: this.lastSummary?.lastScanTime || new Date().toISOString(),
+      engineUsed: this.scanStatus.engine || 'cpu',
     };
   }
 

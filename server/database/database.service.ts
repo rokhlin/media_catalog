@@ -1350,6 +1350,26 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
   getKnownPersons(): any[] {
     const db = this.getDb();
+
+    // Count distinct media files where person appears in either media_faces or face_registry
+    let countsByName: Record<string, number> = {};
+    try {
+      const countRows = db.prepare(`
+        SELECT name, COUNT(DISTINCT source_file) as cnt
+        FROM (
+          SELECT name, source_file FROM face_registry WHERE name IS NOT NULL AND LOWER(name) NOT LIKE 'face_%' AND name != ''
+          UNION
+          SELECT name, source_file FROM media_faces WHERE name IS NOT NULL AND LOWER(name) NOT LIKE 'face_%' AND name != ''
+        )
+        GROUP BY name
+      `).all() as any[];
+      for (const c of countRows) {
+        if (c.name) countsByName[c.name.toLowerCase()] = c.cnt;
+      }
+    } catch {
+      countsByName = {};
+    }
+
     const rows = db.prepare(`
       SELECT 
         fr.face_id,
@@ -1360,17 +1380,21 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         fr.source_file,
         fr.created_at
       FROM face_registry fr
-      WHERE fr.is_reference = 1 AND LOWER(fr.name) NOT LIKE 'face_%' AND fr.name != ''
-      ORDER BY fr.name ASC, fr.created_at ASC
+      WHERE LOWER(fr.name) NOT LIKE 'face_%' AND fr.name != ''
+      ORDER BY fr.is_reference DESC, fr.confidence DESC, fr.created_at ASC
     `).all() as any[];
 
     const personsMap: Record<string, any> = {};
     for (const r of rows) {
       const pName = r.name;
-      if (!personsMap[pName]) {
-        personsMap[pName] = {
+      const lower = pName.toLowerCase();
+      if (!personsMap[lower]) {
+        personsMap[lower] = {
           person_id: r.person_id,
           name: pName,
+          media_count: countsByName[lower] || 1,
+          count: countsByName[lower] || 1,
+          representative_face_id: r.face_id,
           reference_count: 0,
           reference_face_count: 0,
           reference_faces: [],
@@ -1387,11 +1411,14 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         source_file: r.source_file,
         created_at: r.created_at,
       };
-      personsMap[pName].reference_faces.push(faceItem);
-      personsMap[pName].reference_count += 1;
-      personsMap[pName].reference_face_count += 1;
+      personsMap[lower].reference_faces.push(faceItem);
+      personsMap[lower].reference_count += 1;
+      personsMap[lower].reference_face_count += 1;
       if (r.image_path) {
-        personsMap[pName].sample_images.push(r.image_path);
+        personsMap[lower].sample_images.push(r.image_path);
+        if (!personsMap[lower].sample_image) {
+          personsMap[lower].sample_image = r.image_path;
+        }
       }
     }
 
