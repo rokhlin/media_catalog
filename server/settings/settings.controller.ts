@@ -22,8 +22,8 @@ export class SettingsController {
   }
 
   @Post('settings')
-  @RequirePermissions('admin_panel')
-  @ApiOperation({ summary: 'Update input, output, and model configurations (Admin)' })
+  @RequirePermissions('admin_panel', 'edit_metadata')
+  @ApiOperation({ summary: 'Update input, output, and model configurations' })
   updateSettings(@Body() body: SettingsUpdateRequestDto) {
     return this.settingsService.updateSettings(body);
   }

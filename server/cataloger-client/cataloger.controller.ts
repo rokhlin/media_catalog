@@ -14,7 +14,7 @@ export class CatalogerController {
   constructor(@Inject(CatalogerClientService) private readonly catalogerService: CatalogerClientService) {}
 
   @Post('run')
-  @RequirePermissions('admin_panel')
+  @RequirePermissions('admin_panel', 'edit_metadata')
   @ApiOperation({ summary: 'Trigger full cataloging sync' })
   @ApiQuery({ name: 'force', required: false, type: Boolean, description: 'Force re-processing of already synced items' })
   @ApiQuery({ name: 'mode', required: false, type: String, description: 'Single pipeline mode' })

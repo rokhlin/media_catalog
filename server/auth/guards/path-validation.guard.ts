@@ -24,6 +24,12 @@ export class PathValidationGuard implements CanActivate {
       if (!token && request.query?.token && typeof request.query.token === 'string') {
         token = request.query.token;
       }
+      if (!token && request.headers?.cookie && typeof request.headers.cookie === 'string') {
+        const match = request.headers.cookie.match(/(?:^|;\s*)media_cataloger_session=([^;]*)/);
+        if (match) {
+          token = decodeURIComponent(match[1]);
+        }
+      }
       if (token) {
         try {
           user = this.authService.verifyToken(token);

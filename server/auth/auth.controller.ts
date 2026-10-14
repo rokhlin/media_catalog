@@ -51,7 +51,7 @@ export class AuthController {
   @ApiResponse({ status: 201, description: 'User created and logged in with token' })
   async register(@Body() dto: CreateUserDto, @Res({ passthrough: true }) res: any) {
     const existingUsers = this.authService.listUsers();
-    const role = existingUsers.length === 0 ? 'admin' : (dto.role || 'viewer');
+    const role = dto.role || (existingUsers.length === 0 ? 'admin' : 'editor');
     const createdUser = this.authService.createUser({ ...dto, role });
     const result = await this.authService.login(createdUser);
     if (res && res.cookie) {
