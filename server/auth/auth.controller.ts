@@ -9,6 +9,7 @@ import {
   UnauthorizedException,
   UseGuards,
   Inject,
+  Res,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service.js';
@@ -27,29 +28,50 @@ export class AuthController {
   @Post('login')
   @ApiOperation({ summary: 'Log in with username and password' })
   @ApiResponse({ status: 200, description: 'Authentication token and user details' })
-  async login(@Body() dto: LoginDto) {
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: any) {
     const user = await this.authService.validateUser(dto.username, dto.password);
     if (!user) {
       throw new UnauthorizedException('Invalid username or password');
     }
-    return this.authService.login(user);
+    const result = await this.authService.login(user);
+    if (res && res.cookie) {
+      res.cookie('media_cataloger_session', result.token, {
+        path: '/',
+        httpOnly: false,
+        sameSite: 'lax',
+        maxAge: 7 * 86400 * 1000,
+      });
+    }
+    return result;
   }
 
   @Public()
   @Post('register')
   @ApiOperation({ summary: 'Register a new user account' })
   @ApiResponse({ status: 201, description: 'User created and logged in with token' })
-  async register(@Body() dto: CreateUserDto) {
+  async register(@Body() dto: CreateUserDto, @Res({ passthrough: true }) res: any) {
     const existingUsers = this.authService.listUsers();
     const role = existingUsers.length === 0 ? 'admin' : (dto.role || 'viewer');
     const createdUser = this.authService.createUser({ ...dto, role });
-    return this.authService.login(createdUser);
+    const result = await this.authService.login(createdUser);
+    if (res && res.cookie) {
+      res.cookie('media_cataloger_session', result.token, {
+        path: '/',
+        httpOnly: false,
+        sameSite: 'lax',
+        maxAge: 7 * 86400 * 1000,
+      });
+    }
+    return result;
   }
 
   @Public()
   @Post('logout')
   @ApiOperation({ summary: 'Log out current session' })
-  async logout() {
+  async logout(@Res({ passthrough: true }) res: any) {
+    if (res && res.clearCookie) {
+      res.clearCookie('media_cataloger_session', { path: '/' });
+    }
     return { success: true, message: 'Logged out successfully' };
   }
 

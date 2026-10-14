@@ -50,6 +50,14 @@ export class JwtAuthGuard implements CanActivate {
         return token;
       }
     }
+    // Check cookie for media_cataloger_session
+    const cookieHeader = request.headers?.cookie;
+    if (cookieHeader && typeof cookieHeader === 'string') {
+      const match = cookieHeader.match(/(?:^|;\s*)media_cataloger_session=([^;]*)/);
+      if (match) {
+        return decodeURIComponent(match[1]);
+      }
+    }
     // Also check query param fallback for direct image/video preview URLs
     if (request.query?.token && typeof request.query.token === 'string') {
       return request.query.token;
