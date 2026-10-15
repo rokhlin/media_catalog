@@ -100,5 +100,13 @@ export class SettingsController {
     const targetModel = body.modelId || body.model || body.model_id || '';
     return this.settingsService.loadLocalModel(targetModel);
   }
+
+  @Public()
+  @Get('storage/telemetry')
+  @ApiOperation({ summary: 'Get detailed storage usage telemetry including media, db, cache and OS disk capacity' })
+  @ApiResponse({ status: 200, description: 'Storage telemetry and disk quota breakdown' })
+  getStorageTelemetry(@Req() req: any) {
+    return this.settingsService.getStorageTelemetry(req?.user);
+  }
 }
 

@@ -7,13 +7,17 @@ import {
   Body,
   Param,
   UnauthorizedException,
+  BadRequestException,
   UseGuards,
   Inject,
   Res,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiConsumes } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthService } from './auth.service.js';
-import { LoginDto, CreateUserDto, UpdateUserDto, ChangePasswordDto, ForgotPasswordDto, ResetPasswordDto } from './dto/auth.dto.js';
+import { LoginDto, CreateUserDto, UpdateUserDto, UpdateProfileDto, ChangePasswordDto, ForgotPasswordDto, ResetPasswordDto } from './dto/auth.dto.js';
 import { Public, Roles, RequirePermissions, CurrentUser } from './auth.decorators.js';
 import { JwtAuthGuard } from './auth.guard.js';
 import { RolesGuard } from './roles.guard.js';
@@ -115,6 +119,47 @@ export class AuthController {
     }
     const success = this.authService.changePassword(user.sub, dto);
     return { success, message: 'Password updated successfully' };
+  }
+
+  @Patch('profile')
+  @ApiOperation({ summary: 'Update profile (name, email, avatar) of current authenticated user' })
+  async updateProfile(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
+    if (!user?.sub) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    const updated = this.authService.updateProfile(user.sub, dto);
+    return { success: true, user: updated };
+  }
+
+  @Post('avatar-video')
+  @UseInterceptors(FileInterceptor('video'))
+  @ApiOperation({ summary: 'Upload trimmed video avatar' })
+  @ApiConsumes('multipart/form-data')
+  async uploadAvatarVideo(@CurrentUser() user: any, @UploadedFile() file: any) {
+    if (!user?.sub) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    if (!file || !file.buffer) {
+      throw new BadRequestException('No video file provided');
+    }
+    const filename = this.authService.saveAvatarVideo(user.sub, file.buffer, file.originalname);
+    const videoUrl = `/api/auth/avatar-video/${filename}`;
+    const updated = this.authService.updateProfile(user.sub, {
+      avatarVideoUrl: videoUrl,
+      avatarType: 'video',
+    });
+    return {
+      success: true,
+      videoUrl,
+      user: updated,
+    };
+  }
+
+  @Public()
+  @Get('avatar-video/:filename')
+  @ApiOperation({ summary: 'Stream user avatar video' })
+  streamAvatarVideo(@Param('filename') filename: string, @Res() res: any) {
+    this.authService.streamAvatarVideo(filename, res);
   }
 
   // --- User Administration (Admin or manage_users) ---

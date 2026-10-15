@@ -1,7 +1,9 @@
 import { Injectable, UnauthorizedException, BadRequestException, ForbiddenException, NotFoundException, Logger, Inject, Optional } from '@nestjs/common';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { DatabaseService } from '../database/database.service.js';
-import { CreateUserDto, UpdateUserDto, ChangePasswordDto, ForgotPasswordDto, ResetPasswordDto } from './dto/auth.dto.js';
+import { CreateUserDto, UpdateUserDto, UpdateProfileDto, ChangePasswordDto, ResetPasswordDto } from './dto/auth.dto.js';
 import { UserWorkspaceService } from '../workspace/user-workspace.service.js';
 
 export interface JwtPayload {
@@ -176,6 +178,10 @@ export class AuthService {
         role: user.role,
         permissions,
         root_folder_path: rootFolderPath,
+        email: user.email,
+        avatarUrl: user.avatar_url,
+        avatarType: user.avatar_type || 'image',
+        avatarVideoUrl: user.avatar_video_url,
         createdAt: user.created_at,
       },
     };
@@ -194,6 +200,11 @@ export class AuthService {
         displayName: u.display_name,
         role: u.role,
         permissions: perms,
+        email: u.email,
+        avatarUrl: u.avatar_url,
+        avatarType: u.avatar_type || 'image',
+        avatarVideoUrl: u.avatar_video_url,
+        root_folder_path: u.root_folder_path,
         createdAt: u.created_at,
         updatedAt: u.updated_at,
       };
@@ -212,6 +223,11 @@ export class AuthService {
       displayName: u.display_name,
       role: u.role,
       permissions: perms,
+      email: u.email,
+      avatarUrl: u.avatar_url,
+      avatarType: u.avatar_type || 'image',
+      avatarVideoUrl: u.avatar_video_url,
+      root_folder_path: u.root_folder_path,
       createdAt: u.created_at,
       updatedAt: u.updated_at,
     };
@@ -238,6 +254,10 @@ export class AuthService {
       role: dto.role,
       permissions,
       root_folder_path: dto.root_folder_path || undefined,
+      email: dto.email?.trim() || undefined,
+      avatar_url: dto.avatarUrl?.trim() || undefined,
+      avatar_type: dto.avatarType || 'image',
+      avatar_video_url: dto.avatarVideoUrl?.trim() || undefined,
     });
 
     return this.getUserById(created.id);
@@ -250,6 +270,9 @@ export class AuthService {
     }
 
     const updates: any = {};
+    if (dto.username !== undefined && dto.username.trim()) {
+      updates.username = dto.username.trim();
+    }
     if (dto.displayName !== undefined) updates.displayName = dto.displayName;
     if (dto.role !== undefined) updates.role = dto.role;
     if (dto.permissions !== undefined) {
@@ -258,6 +281,10 @@ export class AuthService {
       updates.permissions = DEFAULT_ROLE_PERMISSIONS[dto.role] || DEFAULT_ROLE_PERMISSIONS.viewer;
     }
     if (dto.root_folder_path !== undefined) updates.root_folder_path = dto.root_folder_path;
+    if (dto.email !== undefined) updates.email = dto.email.trim();
+    if (dto.avatarUrl !== undefined) updates.avatar_url = dto.avatarUrl.trim();
+    if (dto.avatarType !== undefined) updates.avatar_type = dto.avatarType;
+    if (dto.avatarVideoUrl !== undefined) updates.avatar_video_url = dto.avatarVideoUrl.trim();
 
     if (dto.password && dto.password.trim().length > 0) {
       const { hash, salt } = this.hashPassword(dto.password);
@@ -266,6 +293,23 @@ export class AuthService {
     }
 
     const updated = this.db.updateUser(id, updates);
+    return this.getUserById(updated.id);
+  }
+
+  updateProfile(userId: string, dto: UpdateProfileDto): any {
+    const existing = this.db.getUserById(userId);
+    if (!existing) {
+      throw new NotFoundException(`User ${userId} not found`);
+    }
+
+    const updates: any = {};
+    if (dto.displayName !== undefined) updates.displayName = dto.displayName.trim();
+    if (dto.email !== undefined) updates.email = dto.email.trim();
+    if (dto.avatarUrl !== undefined) updates.avatar_url = dto.avatarUrl.trim();
+    if (dto.avatarType !== undefined) updates.avatar_type = dto.avatarType;
+    if (dto.avatarVideoUrl !== undefined) updates.avatar_video_url = dto.avatarVideoUrl.trim();
+
+    const updated = this.db.updateUser(userId, updates);
     return this.getUserById(updated.id);
   }
 
@@ -374,5 +418,37 @@ export class AuthService {
       success: true,
       message: `Пароль для пользователя ${user.username} успешно обновлён`,
     };
+  }
+
+  saveAvatarVideo(userId: string, buffer: Buffer, originalName: string): string {
+    const avatarDir = path.resolve(process.cwd(), 'storage', 'avatars');
+    if (!fs.existsSync(avatarDir)) {
+      fs.mkdirSync(avatarDir, { recursive: true });
+    }
+    const ext = path.extname(originalName) || '.mp4';
+    const filename = `avatar_${userId}_${Date.now()}${ext}`;
+    const filePath = path.join(avatarDir, filename);
+    fs.writeFileSync(filePath, buffer);
+    return filename;
+  }
+
+  streamAvatarVideo(filename: string, res: any): void {
+    const safeFilename = path.basename(filename);
+    const filePath = path.resolve(process.cwd(), 'storage', 'avatars', safeFilename);
+    if (!fs.existsSync(filePath)) {
+      res.status(404).send('Avatar video not found');
+      return;
+    }
+    const stat = fs.statSync(filePath);
+    const ext = path.extname(safeFilename).toLowerCase();
+    const contentType = ext === '.webm' ? 'video/webm' : 'video/mp4';
+
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Content-Length': stat.size,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'public, max-age=86400',
+    });
+    fs.createReadStream(filePath).pipe(res);
   }
 }

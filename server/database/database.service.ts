@@ -237,6 +237,11 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         password_salt TEXT NOT NULL,
         role TEXT NOT NULL DEFAULT 'viewer',
         permissions TEXT NOT NULL DEFAULT '[]',
+        root_folder_path TEXT,
+        email TEXT,
+        avatar_url TEXT,
+        avatar_type TEXT NOT NULL DEFAULT 'image',
+        avatar_video_url TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
       );
@@ -368,6 +373,18 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         if (!uCols.has('root_folder_path')) {
           db.exec('ALTER TABLE users ADD COLUMN root_folder_path TEXT;');
         }
+        if (!uCols.has('email')) {
+          db.exec('ALTER TABLE users ADD COLUMN email TEXT;');
+        }
+        if (!uCols.has('avatar_url')) {
+          db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT;');
+        }
+        if (!uCols.has('avatar_type')) {
+          db.exec("ALTER TABLE users ADD COLUMN avatar_type TEXT DEFAULT 'image';");
+        }
+        if (!uCols.has('avatar_video_url')) {
+          db.exec('ALTER TABLE users ADD COLUMN avatar_video_url TEXT;');
+        }
       } catch {
         // ignore
       }
@@ -463,6 +480,56 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
             VALUES (?, ?, ?, ?, ?, 'admin', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
           `).run('user_admin_default', 'admin', 'Administrator', hash, salt, defaultAdminPermissions);
           this.logger.log('Seeded default administrator account (admin with Test2026)');
+        }
+
+        // Reconcile and import users from other known database locations (e.g. Y:/catalog_history.db)
+        const isTestEnv = process.env.NODE_ENV === 'test' || /tmp|temp/i.test(this.config.projectRoot) || /tmp|temp/i.test(this.config.dbPath);
+        if (!isTestEnv) {
+          const activeDbNorm = path.resolve(this.config.dbPath).toLowerCase();
+          const candidateDbPaths = [
+            'Y:/catalog_history.db',
+            'Y:\\catalog_history.db',
+            path.resolve(this.config.projectRoot, 'media_output', 'catalog_history.db'),
+          ];
+          for (const cPath of candidateDbPaths) {
+            if (fs.existsSync(cPath) && path.resolve(cPath).toLowerCase() !== activeDbNorm) {
+              try {
+              const srcDb = new DatabaseConstructor(cPath, { readonly: true, timeout: 5000 });
+              const tables = srcDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").all();
+              if (tables.length > 0) {
+                const srcUsers = srcDb.prepare('SELECT * FROM users').all() as any[];
+                for (const u of srcUsers) {
+                  const existing = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(u.username);
+                  if (!existing) {
+                    db.prepare(`
+                      INSERT INTO users (id, username, display_name, password_hash, password_salt, role, permissions, root_folder_path, email, avatar_url, avatar_type, avatar_video_url, created_at, updated_at)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    `).run(
+                      u.id,
+                      u.username,
+                      u.display_name || u.username,
+                      u.password_hash,
+                      u.password_salt,
+                      u.role || 'viewer',
+                      typeof u.permissions === 'string' ? u.permissions : JSON.stringify(u.permissions || []),
+                      u.root_folder_path || null,
+                      u.email || null,
+                      u.avatar_url || null,
+                      u.avatar_type || 'image',
+                      u.avatar_video_url || null,
+                      u.created_at || new Date().toISOString(),
+                      u.updated_at || new Date().toISOString()
+                    );
+                    this.logger.log(`[DatabaseService] Successfully reconciled user "${u.username}" (${u.role}) from ${cPath}`);
+                  }
+                }
+              }
+              srcDb.close();
+            } catch (err: any) {
+              this.logger.warn(`Notice during user reconciliation from ${cPath}: ${err.message}`);
+            }
+          }
+        }
         }
       } catch (userSeedErr) {
         this.logger.warn(`Notice during default admin check: ${userSeedErr}`);
@@ -1795,7 +1862,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
   listUsers(): any[] {
     const db = this.getDb();
-    const rows = db.prepare('SELECT id, username, display_name, role, permissions, root_folder_path, created_at, updated_at FROM users ORDER BY created_at ASC').all() as any[];
+    const rows = db.prepare('SELECT id, username, display_name, role, permissions, root_folder_path, email, avatar_url, avatar_type, avatar_video_url, created_at, updated_at FROM users ORDER BY created_at ASC').all() as any[];
     return rows.map((r) => ({
       ...r,
       permissions: typeof r.permissions === 'string' ? JSON.parse(r.permissions || '[]') : r.permissions,
@@ -1811,12 +1878,16 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     role: string;
     permissions: string[];
     root_folder_path?: string;
+    email?: string;
+    avatar_url?: string;
+    avatar_type?: string;
+    avatar_video_url?: string;
   }): any {
     const db = this.getDb();
     const permJson = JSON.stringify(user.permissions || []);
     db.prepare(`
-      INSERT INTO users (id, username, display_name, password_hash, password_salt, role, permissions, root_folder_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+      INSERT INTO users (id, username, display_name, password_hash, password_salt, role, permissions, root_folder_path, email, avatar_url, avatar_type, avatar_video_url, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
     `).run(
       user.id,
       user.username.trim(),
@@ -1825,7 +1896,11 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       user.passwordSalt,
       user.role || 'viewer',
       permJson,
-      user.root_folder_path || null
+      user.root_folder_path || null,
+      user.email || null,
+      user.avatar_url || null,
+      user.avatar_type || 'image',
+      user.avatar_video_url || null
     );
     return this.getUserById(user.id);
   }
@@ -1833,36 +1908,64 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   updateUser(
     id: string,
     updates: {
+      username?: string;
       displayName?: string;
       passwordHash?: string;
       passwordSalt?: string;
       role?: string;
       permissions?: string[];
       root_folder_path?: string;
+      email?: string;
+      avatar_url?: string;
+      avatar_type?: string;
+      avatar_video_url?: string;
     }
   ): any {
     const db = this.getDb();
     const current = this.getUserById(id);
     if (!current) return null;
 
+    const newUsername = updates.username !== undefined ? updates.username.trim().toLowerCase() : current.username;
     const newDisplayName = updates.displayName !== undefined ? updates.displayName : current.display_name;
     const newHash = updates.passwordHash !== undefined ? updates.passwordHash : current.password_hash;
     const newSalt = updates.passwordSalt !== undefined ? updates.passwordSalt : current.password_salt;
     const newRole = updates.role !== undefined ? updates.role : current.role;
     const newPerms = updates.permissions !== undefined ? JSON.stringify(updates.permissions) : JSON.stringify(current.permissions || []);
     const newRootPath = updates.root_folder_path !== undefined ? updates.root_folder_path : current.root_folder_path;
+    const newEmail = updates.email !== undefined ? updates.email : current.email;
+    const newAvatarUrl = updates.avatar_url !== undefined ? updates.avatar_url : current.avatar_url;
+    const newAvatarType = updates.avatar_type !== undefined ? updates.avatar_type : (current.avatar_type || 'image');
+    const newAvatarVideoUrl = updates.avatar_video_url !== undefined ? updates.avatar_video_url : current.avatar_video_url;
 
     db.prepare(`
       UPDATE users SET
+        username = ?,
         display_name = ?,
         password_hash = ?,
         password_salt = ?,
         role = ?,
         permissions = ?,
         root_folder_path = ?,
+        email = ?,
+        avatar_url = ?,
+        avatar_type = ?,
+        avatar_video_url = ?,
         updated_at = datetime('now', 'localtime')
       WHERE id = ?
-    `).run(newDisplayName, newHash, newSalt, newRole, newPerms, newRootPath, id);
+    `).run(
+      newUsername,
+      newDisplayName,
+      newHash,
+      newSalt,
+      newRole,
+      newPerms,
+      newRootPath,
+      newEmail,
+      newAvatarUrl,
+      newAvatarType,
+      newAvatarVideoUrl,
+      id
+    );
 
     return this.getUserById(id);
   }

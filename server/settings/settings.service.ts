@@ -682,4 +682,121 @@ export class SettingsService {
       message: `Model ${cleanId} configured. Just-in-time loading will activate on first inference request.`,
     };
   }
+
+  getStorageTelemetry(user?: any) {
+    const dbPath = this.config.dbPath;
+    const dbDir = path.dirname(dbPath);
+    let diskTotal = 0;
+    let diskFree = 0;
+    let diskAvailable = 0;
+
+    try {
+      const targetDir = fs.existsSync(dbDir) ? dbDir : (process.platform === 'win32' ? 'C:/' : '/');
+      const stats = (fs as any).statfsSync(targetDir);
+      diskTotal = Number(stats.blocks) * Number(stats.bsize);
+      diskFree = Number(stats.bfree) * Number(stats.bsize);
+      diskAvailable = Number(stats.bavail) * Number(stats.bsize);
+    } catch (e: any) {
+      this.logger.warn(`Could not query statfs: ${e.message}`);
+    }
+
+    // Query media sizes from SQLite DB
+    const db = this.db.getDb(user?.sub);
+    let photoCount = 0;
+    let photoBytes = 0;
+    let videoCount = 0;
+    let videoBytes = 0;
+    let otherCount = 0;
+    let otherBytes = 0;
+
+    try {
+      const rows = db.prepare(`
+        SELECT 
+          CASE 
+            WHEN LOWER(media_type) IN ('photo', 'image') THEN 'photo'
+            WHEN LOWER(media_type) = 'video' THEN 'video'
+            ELSE 'other'
+          END as mgroup,
+          COUNT(*) as cnt,
+          COALESCE(SUM(file_size), 0) as total_size
+        FROM media_items
+        GROUP BY mgroup
+      `).all() as any[];
+
+      for (const r of rows) {
+        if (r.mgroup === 'photo') {
+          photoCount = r.cnt;
+          photoBytes = r.total_size;
+        } else if (r.mgroup === 'video') {
+          videoCount = r.cnt;
+          videoBytes = r.total_size;
+        } else {
+          otherCount = r.cnt;
+          otherBytes = r.total_size;
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed to query media sizes: ${err.message}`);
+    }
+
+    // Calculate database size
+    let dbBytes = 0;
+    try {
+      if (fs.existsSync(dbPath)) {
+        dbBytes += fs.statSync(dbPath).size;
+      }
+      const walPath = `${dbPath}-wal`;
+      if (fs.existsSync(walPath)) {
+        dbBytes += fs.statSync(walPath).size;
+      }
+      const shmPath = `${dbPath}-shm`;
+      if (fs.existsSync(shmPath)) {
+        dbBytes += fs.statSync(shmPath).size;
+      }
+    } catch {}
+
+    // Calculate cache/thumbnails and metadata sidecars size
+    let cacheBytes = 0;
+    try {
+      const thumbDir = path.resolve(this.config.outputFolder, 'cache', 'thumbnails');
+      if (fs.existsSync(thumbDir)) {
+        const files = fs.readdirSync(thumbDir);
+        for (const f of files) {
+          try {
+            cacheBytes += fs.statSync(path.join(thumbDir, f)).size;
+          } catch {}
+        }
+      }
+    } catch {}
+
+    const totalUsedBytes = photoBytes + videoBytes + otherBytes + dbBytes + cacheBytes;
+    const configuredQuotaBytes = this.config.getSavedSettings()?.STORAGE_QUOTA_BYTES
+      ? Number(this.config.getSavedSettings().STORAGE_QUOTA_BYTES)
+      : null;
+
+    return {
+      disk: {
+        total: diskTotal,
+        free: diskFree,
+        available: diskAvailable,
+        used: diskTotal - diskAvailable,
+      },
+      quota: {
+        configuredBytes: configuredQuotaBytes,
+        effectiveTotalBytes: configuredQuotaBytes || diskTotal,
+        percentUsed: (configuredQuotaBytes || diskTotal) > 0
+          ? Math.min(100, Number(((totalUsedBytes / (configuredQuotaBytes || diskTotal)) * 100).toFixed(1)))
+          : 0,
+      },
+      breakdown: {
+        photos: { count: photoCount, bytes: photoBytes },
+        videos: { count: videoCount, bytes: videoBytes },
+        other: { count: otherCount, bytes: otherBytes },
+        database: { bytes: dbBytes },
+        cacheAndThumbnails: { bytes: cacheBytes },
+        totalMediaBytes: photoBytes + videoBytes + otherBytes,
+        totalUsedBytes,
+      },
+    };
+  }
 }
