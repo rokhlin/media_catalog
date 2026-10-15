@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service.js';
-import { LoginDto, CreateUserDto, UpdateUserDto, ChangePasswordDto } from './dto/auth.dto.js';
+import { LoginDto, CreateUserDto, UpdateUserDto, ChangePasswordDto, ForgotPasswordDto, ResetPasswordDto } from './dto/auth.dto.js';
 import { Public, Roles, RequirePermissions, CurrentUser } from './auth.decorators.js';
 import { JwtAuthGuard } from './auth.guard.js';
 import { RolesGuard } from './roles.guard.js';
@@ -43,6 +43,22 @@ export class AuthController {
       });
     }
     return result;
+  }
+
+  @Public()
+  @Post('forgot-password')
+  @ApiOperation({ summary: 'Initiate password recovery check for a user' })
+  @ApiResponse({ status: 200, description: 'User recovery status and hints' })
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.checkPasswordRecovery(dto.username);
+  }
+
+  @Public()
+  @Post('reset-password')
+  @ApiOperation({ summary: 'Reset user password using a recovery key' })
+  @ApiResponse({ status: 200, description: 'Password reset status' })
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPasswordWithRecoveryKey(dto);
   }
 
   @Public()

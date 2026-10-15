@@ -449,7 +449,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         const userCount = (db.prepare('SELECT COUNT(*) as count FROM users').get() as any)?.count || 0;
         if (userCount === 0) {
           const salt = crypto.randomBytes(16).toString('hex');
-          const hash = crypto.pbkdf2Sync('admin', salt, 10000, 64, 'sha512').toString('hex');
+          const hash = crypto.pbkdf2Sync('Test2026', salt, 10000, 64, 'sha512').toString('hex');
           const defaultAdminPermissions = JSON.stringify([
             'view_media',
             'edit_metadata',
@@ -462,7 +462,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
             INSERT INTO users (id, username, display_name, password_hash, password_salt, role, permissions, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, 'admin', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
           `).run('user_admin_default', 'admin', 'Administrator', hash, salt, defaultAdminPermissions);
-          this.logger.log('Seeded default administrator account (admin)');
+          this.logger.log('Seeded default administrator account (admin with Test2026)');
         }
       } catch (userSeedErr) {
         this.logger.warn(`Notice during default admin check: ${userSeedErr}`);
