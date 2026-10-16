@@ -36,6 +36,9 @@ export class MediaCacheService {
   }
 
   private async initDB(): Promise<IDBPDatabase | null> {
+    if (typeof indexedDB === 'undefined') {
+      return null;
+    }
     try {
       return await openDB(DB_NAME, DB_VERSION, {
         upgrade(db) {

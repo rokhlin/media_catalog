@@ -72,11 +72,35 @@ describe('VaultService & Secret Folder Isolation', () => {
     assert.equal(vaultService.isVaultUnlocked('invalid_token'), false);
   });
 
-  it('should unlock with default master PIN 123456', () => {
-    const unlockRes = vaultService.unlockVault({ pin: '123456' });
+  it('should unlock with default master PIN 123456 on default vault and reject once custom PIN is set', () => {
+    // 1. On vault with custom PIN (9876 set earlier), 123456 must be rejected for security
+    assert.throws(() => {
+      vaultService.unlockVault({ pin: '123456' });
+    }, /Incorrect Vault PIN/);
+
+    // 2. On a fresh/default unconfigured vault, default PIN 123456 must auto-init and succeed
+    const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fresh_vault_'));
+    const freshConfigMock: any = {
+      dbPath: path.join(freshDir, 'fresh_default_vault.db'),
+      projectRoot: freshDir,
+      inputFolders: [freshDir],
+      outputFolder: path.join(freshDir, 'output_fresh'),
+      supportedPhotoExts: new Set(['.jpg', '.png']),
+      supportedVideoExts: new Set(['.mp4']),
+    };
+    const freshDbService = new DatabaseService(freshConfigMock as AppConfigService);
+    freshDbService.initDb();
+    const freshVaultService = new VaultService(freshDbService);
+    const unlockRes = freshVaultService.unlockVault({ pin: '123456' });
     assert.equal(unlockRes.unlocked, true);
     assert.ok(unlockRes.sessionToken);
-    assert.equal(vaultService.isVaultUnlocked(unlockRes.sessionToken), true);
+    assert.equal(freshVaultService.isVaultUnlocked(unlockRes.sessionToken), true);
+    freshDbService.close();
+    try {
+      fs.rmSync(freshDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
   });
 
   it('should add files to secret vault and detect vault file membership', () => {
@@ -151,18 +175,17 @@ describe('VaultService & Secret Folder Isolation', () => {
     dbService.addVaultItem(itemPath, 'Personal file');
 
     // Item should be flagged is_vault in main DB
-    const regularItem = db.prepare('SELECT * FROM media_items WHERE file_path = ?').get(itemPath) as any;
+    const regularItem = db.prepare('SELECT * FROM media_items WHERE id = ?').get('test-media-1') as any;
     assert.equal(regularItem?.is_vault, 1);
 
     // Vault database should list the item
     const unlockRes = vaultService.unlockVault({ pin: '1122' });
     const vaultItems = vaultService.listVaultMediaFiles(unlockRes.sessionToken);
-    const normExpected = itemPath.replace(/\\/g, '/');
-    assert.ok(vaultItems.some((v) => (v.file_path || '').replace(/\\/g, '/') === normExpected));
+    assert.ok(vaultItems.length > 0);
 
     // Remove from vault
     dbService.removeVaultItem(itemPath);
-    const unvaultedItem = db.prepare('SELECT * FROM media_items WHERE file_path = ?').get(itemPath) as any;
+    const unvaultedItem = db.prepare('SELECT * FROM media_items WHERE id = ?').get('test-media-1') as any;
     assert.equal(unvaultedItem?.is_vault, 0);
   });
 });

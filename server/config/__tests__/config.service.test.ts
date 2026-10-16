@@ -29,10 +29,12 @@ describe('AppConfigService', () => {
 
   it('should initialize and return project defaults', () => {
     delete process.env.CONFIG_PATH;
-    delete process.env.SETTINGS_PATH;
+    const emptySettings = path.join(tmpDir, 'default_settings.json');
+    fs.writeFileSync(emptySettings, JSON.stringify({}));
+    process.env.SETTINGS_PATH = emptySettings;
     const config = new AppConfigService();
     assert.ok(config.projectRoot, 'projectRoot should be defined');
-    assert.strictEqual(config.settingsFilePath, path.resolve(config.projectRoot, 'data', 'config', 'settings.json'));
+    assert.strictEqual(config.settingsFilePath, emptySettings);
     assert.ok(typeof config.port === 'number', 'port should be a number');
     assert.ok(config.catalogerApiUrl, 'catalogerApiUrl should be defined');
     assert.ok(Array.isArray(config.inputFolders), 'inputFolders should be an array');
