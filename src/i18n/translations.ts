@@ -344,7 +344,7 @@ export const lightboxTranslationsEn: LightboxTranslations = {
   removePersonTooltip: 'Remove person from this photo',
   changePerson: 'Reassign',
   badgeManual: 'Tagged',
-  btnEditMetadata: '✏️ Edit Metadata',
+  btnEditMetadata: 'Edit Metadata',
   metadataEditorTitle: 'Edit Media Metadata',
   tabDescriptions: 'Descriptions & AI',
   tabSceneLocation: 'Scene & Location',
