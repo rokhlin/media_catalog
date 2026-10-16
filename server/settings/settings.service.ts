@@ -700,8 +700,18 @@ export class SettingsService {
       this.logger.warn(`Could not query statfs: ${e.message}`);
     }
 
-    // Query media sizes from SQLite DB
-    const db = this.db.getDb(user?.sub);
+    // Query media sizes from SQLite DB: prefer active catalog database or user database if it has items
+    let db = this.db.getDb();
+    if (user?.sub && user.sub !== 'admin' && user.sub !== 'user_admin_default') {
+      try {
+        const udb = this.db.getDb(user.sub);
+        const row = udb.prepare('SELECT count(*) as cnt FROM media_items').get() as any;
+        if (row && row.cnt > 0) {
+          db = udb;
+        }
+      } catch {}
+    }
+
     let photoCount = 0;
     let photoBytes = 0;
     let videoCount = 0;
@@ -739,35 +749,59 @@ export class SettingsService {
       this.logger.warn(`Failed to query media sizes: ${err.message}`);
     }
 
-    // Calculate database size
+    // Calculate database size across all database files (.db, -wal, -shm) in catalog and output folders
     let dbBytes = 0;
     try {
-      if (fs.existsSync(dbPath)) {
-        dbBytes += fs.statSync(dbPath).size;
-      }
-      const walPath = `${dbPath}-wal`;
-      if (fs.existsSync(walPath)) {
-        dbBytes += fs.statSync(walPath).size;
-      }
-      const shmPath = `${dbPath}-shm`;
-      if (fs.existsSync(shmPath)) {
-        dbBytes += fs.statSync(shmPath).size;
-      }
-    } catch {}
+      const dbDirsToCheck = new Set<string>();
+      if (fs.existsSync(dbDir)) dbDirsToCheck.add(dbDir);
+      const rootDbDir = path.resolve(this.config.outputFolder);
+      if (fs.existsSync(rootDbDir)) dbDirsToCheck.add(rootDbDir);
 
-    // Calculate cache/thumbnails and metadata sidecars size
-    let cacheBytes = 0;
-    try {
-      const thumbDir = path.resolve(this.config.outputFolder, 'cache', 'thumbnails');
-      if (fs.existsSync(thumbDir)) {
-        const files = fs.readdirSync(thumbDir);
-        for (const f of files) {
-          try {
-            cacheBytes += fs.statSync(path.join(thumbDir, f)).size;
-          } catch {}
+      for (const d of dbDirsToCheck) {
+        if (!fs.existsSync(d)) continue;
+        for (const file of fs.readdirSync(d)) {
+          if (file.endsWith('.db') || file.endsWith('.db-wal') || file.endsWith('.db-shm')) {
+            try {
+              dbBytes += fs.statSync(path.join(d, file)).size;
+            } catch {}
+          }
         }
       }
     } catch {}
+
+    // Calculate cache, thumbnails, and sidecar metadata size recursively
+    let cacheBytes = 0;
+    const calculateDirSize = (dirPath: string): number => {
+      let size = 0;
+      if (!fs.existsSync(dirPath)) return size;
+      try {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dirPath, entry.name);
+          try {
+            if (entry.isDirectory()) {
+              size += calculateDirSize(fullPath);
+            } else if (entry.isFile()) {
+              size += fs.statSync(fullPath).size;
+            }
+          } catch {}
+        }
+      } catch {}
+      return size;
+    };
+
+    const cacheDirs = [
+      path.resolve(this.config.outputFolder, 'cache'),
+      path.resolve(this.config.projectRoot || process.cwd(), 'data', 'cache'),
+      path.resolve(this.config.projectRoot || process.cwd(), 'media_output', 'cache'),
+    ];
+    const scannedDirs = new Set<string>();
+    for (const cd of cacheDirs) {
+      if (fs.existsSync(cd) && !scannedDirs.has(cd)) {
+        scannedDirs.add(cd);
+        cacheBytes += calculateDirSize(cd);
+      }
+    }
 
     const totalUsedBytes = photoBytes + videoBytes + otherBytes + dbBytes + cacheBytes;
     const configuredQuotaBytes = this.config.getSavedSettings()?.STORAGE_QUOTA_BYTES

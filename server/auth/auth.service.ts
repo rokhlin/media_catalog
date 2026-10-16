@@ -451,4 +451,46 @@ export class AuthService {
     });
     fs.createReadStream(filePath).pipe(res);
   }
+
+  async saveAvatarPhoto(userId: string, buffer: Buffer, _originalName?: string): Promise<string> {
+    const avatarDir = path.resolve(process.cwd(), 'storage', 'avatars');
+    if (!fs.existsSync(avatarDir)) {
+      fs.mkdirSync(avatarDir, { recursive: true });
+    }
+    const cleanId = String(userId).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `avatar_photo_${cleanId}_${Date.now()}.jpg`;
+    const filePath = path.join(avatarDir, filename);
+
+    try {
+      const sharp = (await import('sharp')).default;
+      await sharp(buffer)
+        .rotate()
+        .resize(512, 512, { fit: 'cover', position: 'center' })
+        .jpeg({ quality: 90 })
+        .toFile(filePath);
+    } catch {
+      fs.writeFileSync(filePath, buffer);
+    }
+
+    return filename;
+  }
+
+  streamAvatarPhoto(filename: string, res: any): void {
+    const safeFilename = path.basename(filename);
+    const filePath = path.resolve(process.cwd(), 'storage', 'avatars', safeFilename);
+    if (!fs.existsSync(filePath)) {
+      res.status(404).send('Avatar photo not found');
+      return;
+    }
+    const stat = fs.statSync(filePath);
+    const ext = path.extname(safeFilename).toLowerCase();
+    const contentType = ext === '.png' ? 'image/png' : (ext === '.webp' ? 'image/webp' : 'image/jpeg');
+
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Content-Length': stat.size,
+      'Cache-Control': 'public, max-age=86400',
+    });
+    fs.createReadStream(filePath).pipe(res);
+  }
 }

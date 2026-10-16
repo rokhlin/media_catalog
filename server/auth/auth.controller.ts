@@ -155,6 +155,37 @@ export class AuthController {
     };
   }
 
+  @Post('avatar-photo')
+  @UseInterceptors(FileInterceptor('photo'))
+  @ApiOperation({ summary: 'Upload cropped photo avatar' })
+  @ApiConsumes('multipart/form-data')
+  async uploadAvatarPhoto(@CurrentUser() user: any, @UploadedFile() file: any) {
+    if (!user?.sub) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    if (!file || !file.buffer) {
+      throw new BadRequestException('No photo file provided');
+    }
+    const filename = await this.authService.saveAvatarPhoto(user.sub, file.buffer, file.originalname);
+    const photoUrl = `/api/auth/avatar-photo/${filename}`;
+    const updated = this.authService.updateProfile(user.sub, {
+      avatarUrl: photoUrl,
+      avatarType: 'image',
+    });
+    return {
+      success: true,
+      avatarUrl: photoUrl,
+      user: updated,
+    };
+  }
+
+  @Public()
+  @Get('avatar-photo/:filename')
+  @ApiOperation({ summary: 'Stream user avatar photo' })
+  streamAvatarPhoto(@Param('filename') filename: string, @Res() res: any) {
+    this.authService.streamAvatarPhoto(filename, res);
+  }
+
   @Public()
   @Get('avatar-video/:filename')
   @ApiOperation({ summary: 'Stream user avatar video' })

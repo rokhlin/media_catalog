@@ -85,14 +85,26 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       const fileFaces = allFacesByFile[r.file_path] || [];
       const faceNames = fileFaces.map((f: any) => f.name || f.person_name).filter(Boolean);
 
+      let resolvedDate = r.media_date;
+      if (!resolvedDate) {
+        const fname = r.filename || path.basename(r.file_path || '');
+        const m1 = fname.match(/^(\d{4})[-_](\d{2})[-_](\d{2})/);
+        const m2 = fname.match(/^(?:IMG_|VID_|PXL_|PHOTO_)?(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/);
+        if (m1) {
+          resolvedDate = `${m1[1]}-${m1[2]}-${m1[3]}`;
+        } else if (m2) {
+          resolvedDate = `${m2[1]}-${m2[2]}-${m2[3]} ${m2[4]}:${m2[5]}:${m2[6]}`;
+        }
+      }
+
       return {
         file_path: r.file_path,
         filename: r.filename || path.basename(r.file_path),
         folder: r.folder,
         file_size: r.file_size,
         mtime: r.mtime,
-        capture_date: r.media_date,
-        media_date: r.media_date,
+        capture_date: resolvedDate,
+        media_date: resolvedDate,
         phash: r.phash,
         is_video: isVideo,
         is_image: isImage,
@@ -118,6 +130,11 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
         camera_make: r.camera_make,
         camera_model: r.camera_model,
         location_name: r.location_name,
+        latitude: r.latitude != null ? Number(r.latitude) : null,
+        longitude: r.longitude != null ? Number(r.longitude) : null,
+        gps: (r.latitude != null && r.longitude != null)
+          ? { latitude: Number(r.latitude), longitude: Number(r.longitude) }
+          : null,
         face_count: fileFaces.length || faceCounts[r.file_path] || 0,
         faces: fileFaces,
         face_names: faceNames,
@@ -1138,11 +1155,18 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
           if (ga.transcription || sdata.transcription) transcription = ga.transcription || sdata.transcription;
           if (ga.transcription_ru || sdata.transcription_ru) transcriptionRu = ga.transcription_ru || sdata.transcription_ru;
           if (ga.timeline_events || sdata.timeline_events) timelineEvents = ga.timeline_events || sdata.timeline_events;
-          if (sdata.capture_date) captureDate = sdata.capture_date;
-          else if (sdata.exif?.DateTimeOriginal) captureDate = sdata.exif.DateTimeOriginal;
-          else if (sdata.exif?.CreateDate) captureDate = sdata.exif.CreateDate;
-          else if (sdata.media_date) captureDate = sdata.media_date;
+          const rawSidecarDate = sdata.capture_date ||
+            sdata.exif?.DateTimeOriginal ||
+            sdata.exif?.CreateDate ||
+            sdata.exif?.datetime ||
+            sdata.exif?.DateTime ||
+            sdata.exif?.date_time ||
+            sdata.media_date;
 
+          if (rawSidecarDate) {
+            const str = String(rawSidecarDate).trim();
+            captureDate = str.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
+          }
           if (sdata.media_date) mediaDate = sdata.media_date;
           else if (captureDate && !mediaDate) mediaDate = captureDate;
 
@@ -1249,6 +1273,46 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
+      // Fallback date from filename if not in sidecar or metadata (e.g. 2016-07-02 12-25-42.JPG, 20240808_130100.heic, IMG_20240808_130100.jpg)
+      if (!captureDate && !mediaDate) {
+        const dm1 = baseName.match(/^(\d{4})[-_](\d{2})[-_](\d{2})/);
+        const dm2 = baseName.match(/^(?:IMG_|VID_|PXL_|PHOTO_)?(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/);
+        if (dm1) {
+          captureDate = `${dm1[1]}-${dm1[2]}-${dm1[3]}`;
+          mediaDate = captureDate;
+        } else if (dm2) {
+          captureDate = `${dm2[1]}-${dm2[2]}-${dm2[3]} ${dm2[4]}:${dm2[5]}:${dm2[6]}`;
+          mediaDate = captureDate;
+        }
+      }
+
+      // Extract GPS coordinates & location name from sidecar EXIF
+      let latitude: number | null = null;
+      let longitude: number | null = null;
+      let locationName: string | null = null;
+
+      if (sdata) {
+        if (sdata.exif?.gps?.latitude != null && sdata.exif?.gps?.longitude != null) {
+          latitude = Number(sdata.exif.gps.latitude);
+          longitude = Number(sdata.exif.gps.longitude);
+        } else if (sdata.exif?.latitude != null && sdata.exif?.longitude != null) {
+          latitude = Number(sdata.exif.latitude);
+          longitude = Number(sdata.exif.longitude);
+        } else if (sdata.gps?.latitude != null && sdata.gps?.longitude != null) {
+          latitude = Number(sdata.gps.latitude);
+          longitude = Number(sdata.gps.longitude);
+        }
+
+        if (sdata.exif?.location) {
+          const l = sdata.exif.location;
+          locationName = [l.city, l.region, l.country].filter(Boolean).join(', ') || l.city || l.country || null;
+        } else if (sdata.location_name) {
+          locationName = sdata.location_name;
+        } else if (sdata.location) {
+          locationName = typeof sdata.location === 'string' ? sdata.location : ([sdata.location.city, sdata.location.country].filter(Boolean).join(', ') || null);
+        }
+      }
+
       const fc = dedupFaces.length > 0 ? dedupFaces.length : (faceCounts[filePath] || baseFaceCounts[baseName.toLowerCase()] || 0);
 
       const normPath = filePath.toLowerCase().replace(/\\/g, '/');
@@ -1277,6 +1341,10 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
         mtime: mtime,
         capture_date: captureDate,
         media_date: mediaDate,
+        latitude: latitude,
+        longitude: longitude,
+        location_name: locationName,
+        gps: (latitude != null && longitude != null) ? { latitude, longitude } : null,
         phash: phash,
         is_video: isVideo,
         is_image: isImage,
@@ -1789,6 +1857,12 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    let captureDate: string | null = dbMeta?.capture_date || dbMeta?.media_date || null;
+    let mediaDate: string | null = dbMeta?.media_date || dbMeta?.capture_date || null;
+    let latitude: number | null = dbMeta?.latitude != null ? Number(dbMeta.latitude) : null;
+    let longitude: number | null = dbMeta?.longitude != null ? Number(dbMeta.longitude) : null;
+    let locationName: string | null = dbMeta?.location_name || null;
+
     // Invalidate sidecar cache for this file to ensure freshest read
     const resolvedSidecar = this.findSidecarFile(resolved, undefined, sidecar);
     if (resolvedSidecar) {
@@ -1815,9 +1889,51 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
         if (ga.transcription_ru || sdata.transcription_ru) transcriptionRu = ga.transcription_ru || sdata.transcription_ru;
         if (ga.timeline_events || sdata.timeline_events) timelineEvents = ga.timeline_events || sdata.timeline_events;
 
+        const rawDate = sdata.capture_date ||
+          sdata.exif?.DateTimeOriginal ||
+          sdata.exif?.CreateDate ||
+          sdata.exif?.datetime ||
+          sdata.exif?.DateTime ||
+          sdata.media_date;
+        if (rawDate) {
+          const str = String(rawDate).trim();
+          captureDate = str.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
+          mediaDate = captureDate;
+        }
+
+        if (sdata.exif?.gps?.latitude != null && sdata.exif?.gps?.longitude != null) {
+          latitude = Number(sdata.exif.gps.latitude);
+          longitude = Number(sdata.exif.gps.longitude);
+        } else if (sdata.exif?.latitude != null && sdata.exif?.longitude != null) {
+          latitude = Number(sdata.exif.latitude);
+          longitude = Number(sdata.exif.longitude);
+        } else if (sdata.gps?.latitude != null && sdata.gps?.longitude != null) {
+          latitude = Number(sdata.gps.latitude);
+          longitude = Number(sdata.gps.longitude);
+        }
+
+        if (sdata.exif?.location) {
+          const l = sdata.exif.location;
+          locationName = [l.city, l.region, l.country].filter(Boolean).join(', ') || l.city || l.country || null;
+        } else if (sdata.location_name) {
+          locationName = sdata.location_name;
+        }
+
         if (desc || descRu || summ || summRu || status === 'UNPROCESSED') {
           status = 'PROCESSED';
         }
+      }
+    }
+
+    if (!captureDate && !mediaDate) {
+      const dm1 = baseName.match(/^(\d{4})[-_](\d{2})[-_](\d{2})/);
+      const dm2 = baseName.match(/^(?:IMG_|VID_|PXL_|PHOTO_)?(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/);
+      if (dm1) {
+        captureDate = `${dm1[1]}-${dm1[2]}-${dm1[3]}`;
+        mediaDate = captureDate;
+      } else if (dm2) {
+        captureDate = `${dm2[1]}-${dm2[2]}-${dm2[3]} ${dm2[4]}:${dm2[5]}:${dm2[6]}`;
+        mediaDate = captureDate;
       }
     }
 
@@ -1854,6 +1970,12 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       folder: folder || path.dirname(resolved),
       file_size: size,
       mtime: mtime,
+      capture_date: captureDate,
+      media_date: mediaDate,
+      latitude: latitude,
+      longitude: longitude,
+      location_name: locationName,
+      gps: (latitude != null && longitude != null) ? { latitude, longitude } : null,
       is_video: isVideo,
       is_image: isImage,
       status: status,

@@ -60,6 +60,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     this.createTables(userDb);
     this.migrateSchema(userDb);
     this.createIndexes(userDb);
+    this.syncExifMetadataFromSidecars(userDb);
 
     this.userDbs.set(cleanId, userDb);
     this.logger.log(`Per-user SQLite database connected in WAL mode for ${cleanId} at: ${userDbPath}`);
@@ -112,6 +113,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       this.createTables();
       this.migrateSchema();
       this.createIndexes();
+      this.syncExifMetadataFromSidecars();
       this.logger.log(`SQLite database connected in WAL mode at: ${dbPath}`);
     } catch (err) {
       this.logger.error(`Failed to initialize SQLite database: ${err}`);
@@ -365,6 +367,15 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       }
       if (!miCols.has('sidecar_path')) {
         db.exec('ALTER TABLE media_items ADD COLUMN sidecar_path TEXT;');
+      }
+      if (!miCols.has('latitude')) {
+        db.exec('ALTER TABLE media_items ADD COLUMN latitude REAL;');
+      }
+      if (!miCols.has('longitude')) {
+        db.exec('ALTER TABLE media_items ADD COLUMN longitude REAL;');
+      }
+      if (!miCols.has('location_name')) {
+        db.exec('ALTER TABLE media_items ADD COLUMN location_name TEXT;');
       }
 
       // Migrate users table columns if missing
@@ -797,11 +808,11 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     const upsertItem = db.prepare(`
       INSERT INTO media_items (
         id, file_path, file_name, folder, media_type, file_size, mtime,
-        status, sidecar_path, media_date, phash, is_vault, updated_at
+        status, sidecar_path, media_date, phash, is_vault, latitude, longitude, location_name, updated_at
       )
       VALUES (
         ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, datetime('now', 'localtime')
+        ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime')
       )
       ON CONFLICT(file_path) DO UPDATE SET
         file_name = excluded.file_name,
@@ -814,6 +825,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         media_date = COALESCE(excluded.media_date, media_items.media_date),
         phash = COALESCE(excluded.phash, media_items.phash),
         is_vault = excluded.is_vault,
+        latitude = COALESCE(excluded.latitude, media_items.latitude),
+        longitude = COALESCE(excluded.longitude, media_items.longitude),
+        location_name = COALESCE(excluded.location_name, media_items.location_name),
         updated_at = datetime('now', 'localtime')
     `);
 
@@ -843,10 +857,14 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         const mediaDate = item.media_date || item.capture_date || null;
         const phash = item.phash || null;
         const isVault = item.is_vault ? 1 : 0;
+        const latitude = item.latitude !== undefined ? item.latitude : (item.gps?.latitude !== undefined ? item.gps.latitude : null);
+        const longitude = item.longitude !== undefined ? item.longitude : (item.gps?.longitude !== undefined ? item.gps.longitude : null);
+        const locationName = item.location_name || item.location || null;
 
         upsertItem.run(
           id, fp, fileName, folder, mediaType, fileSize, mtime,
-          status, sidecarPath, mediaDate, phash, isVault
+          status, sidecarPath, mediaDate, phash, isVault,
+          latitude, longitude, locationName
         );
 
         upsertSync.run(fp, fileSize, mtime, status, sidecarPath);
@@ -1026,6 +1044,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
           m.media_date,
           m.phash,
           m.is_vault,
+          m.latitude,
+          m.longitude,
+          COALESCE(m.location_name, md.location_name) as location_name,
           md.summary,
           md.summary_ru,
           md.description,
@@ -1044,8 +1065,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
           md.transcription_ru,
           md.timeline_events,
           md.camera_make,
-          md.camera_model,
-          md.location_name
+          md.camera_model
         FROM media_items m
         LEFT JOIN media_metadata md ON m.id = md.media_id
         ORDER BY m.media_date DESC, m.mtime DESC
@@ -1055,6 +1075,125 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     } catch (err) {
       this.logger.warn(`Failed reading persisted media items: ${err}`);
       return [];
+    }
+  }
+
+  /**
+   * Automatically backfills media_date, latitude, longitude, and location_name
+   * from existing sidecar files on disk if they are missing in SQLite.
+   */
+  syncExifMetadataFromSidecars(targetDb?: Database): void {
+    const db = targetDb || this.getDb();
+    if (!db) return;
+
+    try {
+      const rows = db.prepare(`
+        SELECT id, file_path, file_name, sidecar_path, media_date, latitude, longitude, location_name
+        FROM media_items
+        WHERE media_date IS NULL OR latitude IS NULL OR location_name IS NULL
+      `).all() as any[];
+
+      if (!rows || rows.length === 0) return;
+
+      const updateStmt = db.prepare(`
+        UPDATE media_items
+        SET
+          media_date = COALESCE(?, media_date),
+          latitude = COALESCE(?, latitude),
+          longitude = COALESCE(?, longitude),
+          location_name = COALESCE(?, location_name),
+          updated_at = datetime('now', 'localtime')
+        WHERE id = ?
+      `);
+
+      let updatedCount = 0;
+      const tx = db.transaction(() => {
+        for (const row of rows) {
+          let sPath = row.sidecar_path;
+          if (!sPath || !fs.existsSync(sPath)) {
+            // Check output folder for sidecar
+            const base = row.file_name || path.basename(row.file_path);
+            const cand = path.resolve(this.config.outputFolder, `${base}.json`);
+            if (fs.existsSync(cand)) {
+              sPath = cand;
+            }
+          }
+
+          let mediaDate: string | null = null;
+          let lat: number | null = null;
+          let lon: number | null = null;
+          let locName: string | null = null;
+
+          if (sPath && fs.existsSync(sPath)) {
+            try {
+              const raw = fs.readFileSync(sPath, 'utf-8');
+              const sdata = JSON.parse(raw);
+
+              // Extract date
+              const rawDate = sdata.capture_date ||
+                sdata.exif?.DateTimeOriginal ||
+                sdata.exif?.CreateDate ||
+                sdata.exif?.datetime ||
+                sdata.exif?.DateTime ||
+                sdata.exif?.date_time ||
+                sdata.media_date;
+
+              if (rawDate) {
+                // Normalize "2016:11:04 13:40:28" to "2016-11-04 13:40:28"
+                const str = String(rawDate).trim();
+                const norm = str.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
+                mediaDate = norm;
+              }
+
+              // Extract GPS
+              if (sdata.exif?.gps?.latitude != null && sdata.exif?.gps?.longitude != null) {
+                lat = Number(sdata.exif.gps.latitude);
+                lon = Number(sdata.exif.gps.longitude);
+              } else if (sdata.exif?.latitude != null && sdata.exif?.longitude != null) {
+                lat = Number(sdata.exif.latitude);
+                lon = Number(sdata.exif.longitude);
+              } else if (sdata.gps?.latitude != null && sdata.gps?.longitude != null) {
+                lat = Number(sdata.gps.latitude);
+                lon = Number(sdata.gps.longitude);
+              }
+
+              // Extract location name
+              if (sdata.exif?.location) {
+                const l = sdata.exif.location;
+                locName = [l.city, l.region, l.country].filter(Boolean).join(', ') || l.city || l.country || null;
+              } else if (sdata.location_name) {
+                locName = sdata.location_name;
+              } else if (sdata.location) {
+                locName = typeof sdata.location === 'string' ? sdata.location : ([sdata.location.city, sdata.location.country].filter(Boolean).join(', ') || null);
+              }
+            } catch {}
+          }
+
+          // Fallback date from filename if still missing (e.g. 2016-07-02 12-25-42.JPG, 20240808_130100.heic, IMG_20240808_130100.jpg)
+          if (!mediaDate) {
+            const fname = row.file_name || path.basename(row.file_path);
+            const m1 = fname.match(/^(\d{4})[-_](\d{2})[-_](\d{2})/);
+            const m2 = fname.match(/^(?:IMG_|VID_|PXL_|PHOTO_)?(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/);
+            if (m1) {
+              mediaDate = `${m1[1]}-${m1[2]}-${m1[3]}`;
+            } else if (m2) {
+              mediaDate = `${m2[1]}-${m2[2]}-${m2[3]} ${m2[4]}:${m2[5]}:${m2[6]}`;
+            }
+          }
+
+          if (mediaDate || lat != null || lon != null || locName) {
+            updateStmt.run(mediaDate, lat, lon, locName, row.id);
+            updatedCount++;
+          }
+        }
+      });
+
+      tx();
+      if (updatedCount > 0) {
+        this.logger.log(`Synced EXIF dates & GPS coordinates for ${updatedCount} media items from sidecars`);
+      }
+    } catch (err) {
+      this.logger.warn(`Failed syncing EXIF metadata from sidecars: ${err}`);
     }
   }
 
