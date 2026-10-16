@@ -179,4 +179,44 @@ describe('FacesService', () => {
     assert.strictEqual(updatedSidecar.faces.length, 1);
     assert.strictEqual(updatedSidecar.faces[0].face_id, 'face_keep_02');
   });
+
+  it('should save person profile, update metadata, and set updated_at without column errors', async () => {
+    const profileData = {
+      name: 'John Doe',
+      first_name: 'John',
+      last_name: 'Doe',
+      middle_name: 'Edward',
+      gender: 'MALE',
+      is_living: true,
+      birth_date: '1985-05-20',
+      birth_place: 'New York',
+      category: 'FAMILY',
+      profession: 'Software Engineer',
+      notes: 'Test notes',
+      bio: 'Test biography',
+    };
+
+    const res1 = await facesService.savePersonProfile(profileData);
+    assert.strictEqual(res1.status, 'success');
+    assert.strictEqual(res1.person.first_name, 'John');
+    assert.strictEqual(res1.person.last_name, 'Doe');
+    assert.strictEqual(res1.person.display_name, 'Doe John');
+    assert.strictEqual(res1.person.is_living, 1);
+    assert.ok(res1.person.updated_at, 'updated_at must be populated on profile save');
+
+    // Update existing profile (verifies UPDATE SQL with updated_at)
+    const res2 = await facesService.savePersonProfile({
+      ...profileData,
+      middle_name: 'UpdatedMiddle',
+      is_living: false,
+      death_date: '2026-01-01',
+      death_place: 'Boston',
+    });
+    assert.strictEqual(res2.status, 'success');
+    assert.strictEqual(res2.person.middle_name, 'UpdatedMiddle');
+    assert.strictEqual(res2.person.is_living, 0);
+    assert.strictEqual(res2.person.death_date, '2026-01-01');
+    assert.ok(res2.person.updated_at, 'updated_at must be refreshed on profile update');
+  });
 });
+
