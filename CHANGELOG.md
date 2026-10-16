@@ -6,9 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
-## [0.15.0] - Unreleased
+## [2.0.0] - 2026-10-16
 
 ### Added
+- **FEAT-026: Person Profile Management & Family Tree Integration**:
+  - Implemented database schema migration in SQLite (`persons` table) with fields for `first_name`, `middle_name`, `last_name`, `gender`, `birth_date`, `death_date`, `notes`, `avatar_file_id`, and `linked_family_tree_person_id`.
+  - Added REST endpoints `GET /api/faces/person-profile` and `POST /api/faces/person-profile` with bidirectional synchronization between person face clusters and the Family Tree database.
+  - Implemented `GET /api/faces/person-meta` returning enriched metadata and primary avatar thumbnails.
+- **Personal Folder & Secret Vault Security Lifecycle (BUG-009, BUG-010, BUG-011)**:
+  - User-level vault access isolation and dedicated `vault_history.db` SQLite database.
+  - Master default PIN `123456` support, custom PIN setting, first-time PIN prompt state (`is_custom_pin`), and PIN recovery via e-mail.
+  - Vault session authentication cookie (`media_cataloger_vault_session`) and authorization checks across `/api/media/file-info`, `/api/media/image`, and face recognition endpoints.
+- **Dynamic LM Studio Local Model Querying & Switching**:
+  - Added `/api/models/local` endpoint to fetch available models dynamically from LM Studio.
+  - Integrated model switching, status checking, and preloading into memory.
+- **Real Host OS Storage Telemetry & Media Quotas (BUG-008)**:
+  - Added `/api/system/storage` endpoint reporting real host OS disk storage utilization and file type statistics.
+- **Multi-User Isolation & Session Cookies (BUG-002)**:
+  - Cookie-based session authentication with `media_cataloger_session` cookie guard and multi-tenant user database routing.
+- **Direct Media Upload & Auto-Analysis Pipeline**:
+  - Added multipart media upload endpoint with immediate automatic background analysis trigger.
+- **SQLite Migration Robustness (BUG-012)**:
+  - Resolved SQLite `ALTER TABLE ADD COLUMN` constant default value restrictions for `updated_at`.
+
 - **AI Tag Recognition & Structured Tagging Pipeline (`server/cataloger-client/`, `server/database/`, `src/models/settings.ts`)**:
   - Added `analyzeWithTags` method to `CatalogerClientService` to execute single-file media analysis with configurable `target_tags` and `tag_format` (`categorized`, `flat`, `prefixed`).
   - Added `media_tags` table schema in `DatabaseService` (`better-sqlite3`) and implemented `saveMediaTags(filePathOrMediaId, tags)` with normalization support.
