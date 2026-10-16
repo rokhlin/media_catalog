@@ -176,7 +176,8 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       CREATE TABLE IF NOT EXISTS persons (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
       );
 
       CREATE TABLE IF NOT EXISTS face_registry (
@@ -499,7 +500,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         if (!pCols.has('primary_face_id')) db.exec('ALTER TABLE persons ADD COLUMN primary_face_id TEXT;');
         if (!pCols.has('tree_person_id')) db.exec('ALTER TABLE persons ADD COLUMN tree_person_id TEXT;');
         if (!pCols.has('is_hidden')) db.exec('ALTER TABLE persons ADD COLUMN is_hidden INTEGER DEFAULT 0;');
-        if (!pCols.has('updated_at')) db.exec("ALTER TABLE persons ADD COLUMN updated_at TEXT DEFAULT (datetime('now', 'localtime'));");
+        if (!pCols.has('updated_at')) db.exec('ALTER TABLE persons ADD COLUMN updated_at TEXT;');
       } catch (err) {
         // ignore if persons table not yet ready
       }
@@ -2107,6 +2108,17 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       targetName = `${lName} ${fName}`;
     } else if (fName) {
       targetName = fName;
+    }
+
+    // Ensure all persons columns exist (defensive against un-migrated connections)
+    try {
+      const pCols = new Set((db.pragma('table_info(persons)') as any[]).map((c: any) => c.name.toLowerCase()));
+      if (!pCols.has('updated_at')) db.exec('ALTER TABLE persons ADD COLUMN updated_at TEXT;');
+      if (!pCols.has('is_hidden')) db.exec('ALTER TABLE persons ADD COLUMN is_hidden INTEGER DEFAULT 0;');
+      if (!pCols.has('primary_face_id')) db.exec('ALTER TABLE persons ADD COLUMN primary_face_id TEXT;');
+      if (!pCols.has('tree_person_id')) db.exec('ALTER TABLE persons ADD COLUMN tree_person_id TEXT;');
+    } catch {
+      // ignore
     }
 
     // Lookup existing in persons table
