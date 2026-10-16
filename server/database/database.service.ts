@@ -734,13 +734,27 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     const norm = filePath.replace(/\\/g, '/');
     const baseName = path.basename(filePath);
     try {
-      const row = db.prepare(`
+      let row = db.prepare(`
         SELECT m.id as media_id, m.file_path, m.file_name, md.*
         FROM media_items m
         LEFT JOIN media_metadata md ON m.id = md.media_id
         WHERE m.file_path = ? OR m.file_path = ? OR m.file_name = ? OR LOWER(m.file_name) = ?
         LIMIT 1
       `).get(filePath, norm, baseName, baseName.toLowerCase()) as any;
+
+      if (!row) {
+        try {
+          const vdb = this.getVaultDb();
+          row = vdb.prepare(`
+            SELECT m.id as media_id, m.file_path, m.file_name, md.*
+            FROM media_items m
+            LEFT JOIN media_metadata md ON m.id = md.media_id
+            WHERE m.file_path = ? OR m.file_path = ? OR m.file_name = ? OR LOWER(m.file_name) = ?
+            LIMIT 1
+          `).get(filePath, norm, baseName, baseName.toLowerCase()) as any;
+        } catch { /* ignore */ }
+      }
+
       return row || null;
     } catch {
       return null;
@@ -1527,10 +1541,45 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
           unique.set(r.face_id, r);
         }
       }
-      return Array.from(unique.values());
+      if (unique.size > 0) {
+        return Array.from(unique.values());
+      }
     } catch {
-      return [];
+      // ignore
     }
+
+    // Vault isolated DB fallback
+    try {
+      const vdb = this.getVaultDb();
+      const vRows = vdb.prepare(`
+        SELECT mf.id, mf.media_id, mf.face_id, mf.person_id, mf.name, mf.confidence, mf.bbox, mf.image_path, mf.time_start, mf.time_end,
+               COALESCE(mf.source_file, m.file_path) as source_file, 0 as is_reference
+        FROM media_faces mf
+        LEFT JOIN media_items m ON mf.media_id = m.id
+        WHERE LOWER(COALESCE(mf.source_file, '')) = LOWER(?)
+           OR LOWER(COALESCE(m.file_path, '')) = LOWER(?)
+           OR LOWER(COALESCE(mf.source_file, '')) LIKE ?
+           OR LOWER(COALESCE(m.file_path, '')) LIKE ?
+        ORDER BY mf.id ASC
+      `).all(filePath, filePath, `%${baseName}`, `%${baseName}`) as any[];
+
+      if (vRows.length > 0) {
+        const unique = new Map<string, any>();
+        for (const r of vRows) {
+          if (r.face_id && !unique.has(r.face_id)) {
+            if (typeof r.bbox === 'string') {
+              try { r.bbox = JSON.parse(r.bbox); } catch {}
+            }
+            unique.set(r.face_id, r);
+          }
+        }
+        return Array.from(unique.values());
+      }
+    } catch {
+      // ignore
+    }
+
+    return [];
   }
 
   saveMediaFaces(filePath: string, faces: any[]): void {

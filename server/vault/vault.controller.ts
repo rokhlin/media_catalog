@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
   Inject,
+  Res,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiHeader } from '@nestjs/swagger';
 import { VaultService } from './vault.service.js';
@@ -48,15 +49,34 @@ export class VaultController {
   @Public()
   @Post('unlock')
   @ApiOperation({ summary: 'Unlock personal folder with PIN' })
-  async unlock(@Body() dto: UnlockVaultDto, @CurrentUser() user?: any) {
-    return this.vaultService.unlockVault(dto, user?.sub);
+  async unlock(
+    @Body() dto: UnlockVaultDto,
+    @Res({ passthrough: true }) res: any,
+    @CurrentUser() user?: any,
+  ) {
+    const result = this.vaultService.unlockVault(dto, user?.sub);
+    try {
+      res.cookie('media_cataloger_vault_session', result.sessionToken, {
+        httpOnly: false,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: Math.max(0, result.expiresAt - Date.now()),
+      });
+    } catch {}
+    return result;
   }
 
   @Public()
   @Post('lock')
   @ApiOperation({ summary: 'Lock personal folder' })
-  async lock(@Headers('x-vault-token') vaultToken?: string) {
+  async lock(
+    @Headers('x-vault-token') vaultToken: string | undefined,
+    @Res({ passthrough: true }) res: any,
+  ) {
     this.vaultService.lockVault(vaultToken);
+    try {
+      res.clearCookie('media_cataloger_vault_session', { path: '/' });
+    } catch {}
     return { success: true, message: 'Personal folder locked successfully' };
   }
 

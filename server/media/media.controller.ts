@@ -331,11 +331,16 @@ export class MediaController {
   async getMediaFileInfo(
     @Query('path') queryPath: string,
     @Query('file') queryFile: string,
+    @Query('vault_token') queryVaultToken: string,
+    @Headers('x-vault-token') headerVaultToken: string,
+    @Req() req: Request,
   ) {
     const target = queryPath || queryFile;
     if (!target || !target.trim()) {
       throw new BadRequestException('Missing file or path parameter');
     }
+    const resolved = this.mediaService.resolveMediaFilePath(target);
+    this.checkVaultAccess(resolved, headerVaultToken || queryVaultToken, req);
     return this.mediaService.getMediaFileInfo(target);
   }
 
