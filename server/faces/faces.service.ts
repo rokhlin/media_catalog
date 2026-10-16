@@ -4,6 +4,7 @@ import * as path from 'path';
 import { AppConfigService } from '../config/config.service.js';
 import { DatabaseService } from '../database/database.service.js';
 import { FamilyTreePublicService } from '../family-tree/family-tree-public.service.js';
+import { FamilyTreeService } from '../family-tree/family-tree.service.js';
 
 @Injectable()
 export class FacesService {
@@ -11,6 +12,7 @@ export class FacesService {
     @Inject(AppConfigService) private readonly config: AppConfigService,
     @Inject(DatabaseService) private readonly db: DatabaseService,
     @Optional() @Inject(FamilyTreePublicService) private readonly familyTreePublicService?: FamilyTreePublicService,
+    @Optional() @Inject(FamilyTreeService) private readonly familyTreeService?: FamilyTreeService,
   ) {}
 
   get catalogerApiUrl(): string {
@@ -215,6 +217,64 @@ export class FacesService {
       status: ok ? 'success' : 'failed',
       message: `Primary face updated for '${trimmed}' to face '${faceId}'.`,
       face_id: faceId,
+    };
+  }
+
+  async savePersonProfile(data: any) {
+    this.db.initDb();
+    const saved = this.db.savePersonProfile(data);
+
+    // Sync with Family Tree if requested and linked
+    const treePersonId = data.tree_person_id || saved.tree_person_id;
+    if (treePersonId && this.familyTreeService) {
+      if (data.sync_tree) {
+        try {
+          this.familyTreeService.updatePerson(treePersonId, {
+            first_name: saved.first_name || saved.name,
+            middle_name: saved.middle_name || undefined,
+            last_name: saved.last_name || undefined,
+            maiden_name: saved.maiden_name || undefined,
+            gender: saved.gender || 'UNKNOWN',
+            is_living: Boolean(saved.is_living),
+            birth_date: saved.birth_date || undefined,
+            birth_place: saved.birth_place || undefined,
+            death_date: !saved.is_living ? (saved.death_date || undefined) : undefined,
+            death_place: !saved.is_living ? (saved.death_place || undefined) : undefined,
+            bio: saved.bio || undefined,
+          });
+        } catch (e) {
+          console.warn('Failed to sync profile with family tree person:', e);
+        }
+      }
+
+      // If primary face is provided, link or update primary avatar in tree
+      if (data.primary_face_id) {
+        try {
+          this.familyTreeService.linkPersonFace({
+            tree_person_id: treePersonId,
+            media_person_name: saved.name,
+            media_face_id: data.primary_face_id,
+            is_primary_avatar: true,
+          });
+        } catch (e) {
+          console.warn('Failed to link primary face to family tree:', e);
+        }
+      }
+    } else if (data.tree_person_id === null && this.familyTreeService) {
+      // Unlink from tree
+      try {
+        const existingLinks = this.familyTreeService.getPersonFaceLinks(data.previous_tree_person_id || '');
+        for (const l of existingLinks) {
+          this.familyTreeService.unlinkPersonFace(l.id);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    return {
+      status: 'success',
+      person: saved,
     };
   }
 

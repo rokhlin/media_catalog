@@ -478,6 +478,32 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         // ignore
       }
 
+      // Migrate persons table columns if missing
+      try {
+        const pCols = new Set((db.pragma('table_info(persons)') as any[]).map((c: any) => c.name.toLowerCase()));
+        if (!pCols.has('first_name')) db.exec('ALTER TABLE persons ADD COLUMN first_name TEXT;');
+        if (!pCols.has('middle_name')) db.exec('ALTER TABLE persons ADD COLUMN middle_name TEXT;');
+        if (!pCols.has('last_name')) db.exec('ALTER TABLE persons ADD COLUMN last_name TEXT;');
+        if (!pCols.has('maiden_name')) db.exec('ALTER TABLE persons ADD COLUMN maiden_name TEXT;');
+        if (!pCols.has('nickname')) db.exec('ALTER TABLE persons ADD COLUMN nickname TEXT;');
+        if (!pCols.has('gender')) db.exec("ALTER TABLE persons ADD COLUMN gender TEXT DEFAULT 'UNKNOWN';");
+        if (!pCols.has('is_living')) db.exec('ALTER TABLE persons ADD COLUMN is_living INTEGER DEFAULT 1;');
+        if (!pCols.has('birth_date')) db.exec('ALTER TABLE persons ADD COLUMN birth_date TEXT;');
+        if (!pCols.has('birth_place')) db.exec('ALTER TABLE persons ADD COLUMN birth_place TEXT;');
+        if (!pCols.has('death_date')) db.exec('ALTER TABLE persons ADD COLUMN death_date TEXT;');
+        if (!pCols.has('death_place')) db.exec('ALTER TABLE persons ADD COLUMN death_place TEXT;');
+        if (!pCols.has('category')) db.exec('ALTER TABLE persons ADD COLUMN category TEXT;');
+        if (!pCols.has('profession')) db.exec('ALTER TABLE persons ADD COLUMN profession TEXT;');
+        if (!pCols.has('notes')) db.exec('ALTER TABLE persons ADD COLUMN notes TEXT;');
+        if (!pCols.has('bio')) db.exec('ALTER TABLE persons ADD COLUMN bio TEXT;');
+        if (!pCols.has('primary_face_id')) db.exec('ALTER TABLE persons ADD COLUMN primary_face_id TEXT;');
+        if (!pCols.has('tree_person_id')) db.exec('ALTER TABLE persons ADD COLUMN tree_person_id TEXT;');
+        if (!pCols.has('is_hidden')) db.exec('ALTER TABLE persons ADD COLUMN is_hidden INTEGER DEFAULT 0;');
+        if (!pCols.has('updated_at')) db.exec("ALTER TABLE persons ADD COLUMN updated_at TEXT DEFAULT (datetime('now', 'localtime'));");
+      } catch (err) {
+        // ignore if persons table not yet ready
+      }
+
       // Migrate face_registry columns if missing
       const frCols = new Set((db.pragma('table_info(face_registry)') as any[]).map((c: any) => c.name.toLowerCase()));
       if (!frCols.has('source_file')) {
@@ -1753,6 +1779,62 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    // Enrich with detailed person profile fields from persons table
+    try {
+      const profileRows = db.prepare('SELECT * FROM persons').all() as any[];
+      const profileByName: Record<string, any> = {};
+      const profileById: Record<string, any> = {};
+      for (const pr of profileRows) {
+        if (pr.name) profileByName[pr.name.toLowerCase()] = pr;
+        if (pr.id) profileById[pr.id] = pr;
+      }
+
+      for (const lower of Object.keys(personsMap)) {
+        const item = personsMap[lower];
+        const pr = profileByName[lower] || profileById[item.person_id];
+        if (pr) {
+          item.id = pr.id;
+          item.first_name = pr.first_name || '';
+          item.middle_name = pr.middle_name || '';
+          item.last_name = pr.last_name || '';
+          item.maiden_name = pr.maiden_name || '';
+          item.nickname = pr.nickname || '';
+          item.gender = pr.gender || 'UNKNOWN';
+          item.is_living = pr.is_living !== undefined ? Boolean(pr.is_living) : true;
+          item.birth_date = pr.birth_date || '';
+          item.birth_place = pr.birth_place || '';
+          item.death_date = pr.death_date || '';
+          item.death_place = pr.death_place || '';
+          item.category = pr.category || '';
+          item.profession = pr.profession || '';
+          item.notes = pr.notes || '';
+          item.bio = pr.bio || '';
+          item.primary_face_id = pr.primary_face_id || '';
+          item.tree_person_id = pr.tree_person_id || null;
+          item.is_hidden = Boolean(pr.is_hidden);
+
+          // Name composition:
+          if (pr.last_name && pr.first_name) {
+            item.display_name = `${pr.last_name.trim()} ${pr.first_name.trim()}`;
+          } else if (pr.first_name) {
+            item.display_name = pr.first_name.trim();
+          } else {
+            item.display_name = item.name;
+          }
+
+          if (pr.primary_face_id) {
+            item.representative_face_id = pr.primary_face_id;
+          }
+        } else {
+          item.display_name = item.name;
+          item.first_name = item.name;
+          item.is_living = true;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
     return Object.values(personsMap);
   }
 
@@ -2006,6 +2088,135 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
     transaction();
     return true;
+  }
+
+  savePersonProfile(data: any): any {
+    const db = this.getDb();
+    const originalName = (data.name || '').trim();
+    if (!originalName) {
+      throw new Error('Person name is required');
+    }
+
+    // Determine target name
+    let targetName = originalName;
+    const fName = (data.first_name || '').trim();
+    const lName = (data.last_name || '').trim();
+    const mName = (data.middle_name || '').trim();
+
+    if (lName && fName) {
+      targetName = `${lName} ${fName}`;
+    } else if (fName) {
+      targetName = fName;
+    }
+
+    // Lookup existing in persons table
+    const existing = db.prepare(`
+      SELECT * FROM persons WHERE id = ? OR LOWER(name) = LOWER(?) OR LOWER(name) = LOWER(?)
+    `).get(data.person_id || '', originalName, targetName) as any;
+
+    const personId = existing?.id || data.person_id || `person_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const isLiving = data.is_living !== undefined ? (data.is_living ? 1 : 0) : 1;
+    const isHidden = data.is_hidden !== undefined ? (data.is_hidden ? 1 : 0) : 0;
+
+    if (existing) {
+      db.prepare(`
+        UPDATE persons SET
+          name = ?,
+          first_name = ?,
+          middle_name = ?,
+          last_name = ?,
+          maiden_name = ?,
+          nickname = ?,
+          gender = ?,
+          is_living = ?,
+          birth_date = ?,
+          birth_place = ?,
+          death_date = ?,
+          death_place = ?,
+          category = ?,
+          profession = ?,
+          notes = ?,
+          bio = ?,
+          primary_face_id = ?,
+          tree_person_id = ?,
+          is_hidden = ?,
+          updated_at = datetime('now', 'localtime')
+        WHERE id = ?
+      `).run(
+        targetName,
+        fName || null,
+        mName || null,
+        lName || null,
+        data.maiden_name?.trim() || null,
+        data.nickname?.trim() || null,
+        data.gender || 'UNKNOWN',
+        isLiving,
+        data.birth_date?.trim() || null,
+        data.birth_place?.trim() || null,
+        isLiving ? null : (data.death_date?.trim() || null),
+        isLiving ? null : (data.death_place?.trim() || null),
+        data.category?.trim() || null,
+        data.profession?.trim() || null,
+        data.notes?.trim() || null,
+        data.bio?.trim() || null,
+        data.primary_face_id || null,
+        data.tree_person_id !== undefined ? data.tree_person_id : (existing.tree_person_id || null),
+        isHidden,
+        existing.id
+      );
+    } else {
+      db.prepare(`
+        INSERT INTO persons (
+          id, name, first_name, middle_name, last_name, maiden_name, nickname,
+          gender, is_living, birth_date, birth_place, death_date, death_place,
+          category, profession, notes, bio, primary_face_id, tree_person_id, is_hidden
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        personId,
+        targetName,
+        fName || null,
+        mName || null,
+        lName || null,
+        data.maiden_name?.trim() || null,
+        data.nickname?.trim() || null,
+        data.gender || 'UNKNOWN',
+        isLiving,
+        data.birth_date?.trim() || null,
+        data.birth_place?.trim() || null,
+        isLiving ? null : (data.death_date?.trim() || null),
+        isLiving ? null : (data.death_place?.trim() || null),
+        data.category?.trim() || null,
+        data.profession?.trim() || null,
+        data.notes?.trim() || null,
+        data.bio?.trim() || null,
+        data.primary_face_id || null,
+        data.tree_person_id || null,
+        isHidden
+      );
+    }
+
+    // If targetName changed from originalName, update face_registry and media_faces
+    if (targetName && originalName && targetName.toLowerCase() !== originalName.toLowerCase()) {
+      db.prepare('UPDATE face_registry SET name = ?, person_id = ? WHERE LOWER(name) = LOWER(?)').run(targetName, personId, originalName);
+      db.prepare('UPDATE media_faces SET name = ?, person_id = ? WHERE LOWER(name) = LOWER(?)').run(targetName, personId, originalName);
+    }
+
+    // If primary_face_id provided, ensure it is set as primary
+    if (data.primary_face_id) {
+      this.setPersonPrimaryFace(targetName, data.primary_face_id);
+    }
+
+    const saved = db.prepare('SELECT * FROM persons WHERE id = ?').get(personId) as any;
+    if (saved) {
+      if (saved.last_name && saved.first_name) {
+        saved.display_name = `${saved.last_name.trim()} ${saved.first_name.trim()}`;
+      } else if (saved.first_name) {
+        saved.display_name = saved.first_name.trim();
+      } else {
+        saved.display_name = saved.name;
+      }
+    }
+    return saved;
   }
 
   resetFaceAssignment(faceId: string): boolean {

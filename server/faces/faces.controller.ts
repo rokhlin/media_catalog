@@ -169,6 +169,13 @@ export class FacesController {
     return this.facesService.setPrimaryFace(target, body.face_id);
   }
 
+  @Post('person-profile')
+  @RequirePermissions('manage_faces')
+  @ApiOperation({ summary: 'Update extended person profile, demographics, and Family Tree sync' })
+  async updatePersonProfile(@Body() body: any) {
+    return this.facesService.savePersonProfile(body);
+  }
+
   @Post('reset')
   @RequirePermissions('manage_faces')
   @ApiOperation({ summary: 'Reset a face assignment back to unassigned candidate' })
