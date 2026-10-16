@@ -22,6 +22,24 @@ interface AuthContextValue {
 const AUTH_TOKEN_KEY = 'media_cataloger_jwt_token';
 const AUTH_USER_KEY = 'media_cataloger_user_data';
 
+/**
+ * Determines if a 401 response from the specified URL should invalidate the user's primary application login.
+ * Vault operations (e.g. entering an incorrect PIN) and auth verification attempts MUST NOT log out the user.
+ */
+export function shouldClearAuthOnUnauthorized(url: string): boolean {
+  if (!url) return true;
+  if (url.includes('/api/vault/')) return false;
+  if (
+    url.includes('/api/auth/login') ||
+    url.includes('/api/auth/register') ||
+    url.includes('/api/auth/forgot-password') ||
+    url.includes('/api/auth/reset-password')
+  ) {
+    return false;
+  }
+  return true;
+}
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -56,7 +74,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...init,
         headers,
       });
-      if (response.status === 401) {
+      if (response.status === 401 && shouldClearAuthOnUnauthorized(url)) {
         setToken(null);
         setCurrentUser(null);
         try {

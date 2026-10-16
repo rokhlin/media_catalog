@@ -72,6 +72,13 @@ describe('VaultService & Secret Folder Isolation', () => {
     assert.equal(vaultService.isVaultUnlocked('invalid_token'), false);
   });
 
+  it('should unlock with default master PIN 123456', () => {
+    const unlockRes = vaultService.unlockVault({ pin: '123456' });
+    assert.equal(unlockRes.unlocked, true);
+    assert.ok(unlockRes.sessionToken);
+    assert.equal(vaultService.isVaultUnlocked(unlockRes.sessionToken), true);
+  });
+
   it('should add files to secret vault and detect vault file membership', () => {
     const privatePath = path.join(tmpDir, 'private_docs.jpg');
     vaultService.addVaultItem(privatePath, 'Personal Documents');
