@@ -63,8 +63,8 @@ export class VaultController {
   @Public()
   @Post('recover-request')
   @ApiOperation({ summary: 'Request PIN recovery code via email' })
-  async requestRecovery(@Body() dto: RecoverVaultPinRequestDto) {
-    return this.vaultService.requestPinRecovery(dto.email);
+  async requestRecovery(@Body() dto: RecoverVaultPinRequestDto, @CurrentUser() user?: any) {
+    return this.vaultService.requestPinRecovery(dto.email, user?.sub);
   }
 
   @Public()

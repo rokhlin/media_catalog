@@ -126,9 +126,12 @@ export class MediaController {
     @Inject(VaultService) private readonly vaultService: VaultService,
   ) {}
 
-  private checkVaultAccess(filePath: string, vaultToken?: string): void {
+  private checkVaultAccess(filePath: string, vaultToken?: string, req?: Request): void {
     if (this.vaultService.isVaultFile(filePath)) {
-      if (!this.vaultService.isVaultUnlocked(vaultToken)) {
+      // Accept vault token from: header/query param (primary) OR cookie (fallback for img tags)
+      const cookieToken = (req as any)?.cookies?.['media_cataloger_vault_session'];
+      const effectiveToken = vaultToken || cookieToken;
+      if (!this.vaultService.isVaultUnlocked(effectiveToken)) {
         throw new ForbiddenException('Secret Vault item is locked. Authentication PIN required.');
       }
     }
@@ -238,7 +241,7 @@ export class MediaController {
       throw new BadRequestException('Missing file or path parameter');
     }
     const resolved = this.mediaService.resolveMediaFilePath(target);
-    this.checkVaultAccess(resolved, headerVaultToken || queryVaultToken);
+    this.checkVaultAccess(resolved, headerVaultToken || queryVaultToken, req);
     
     const size = querySize ? parseInt(querySize, 10) : 300;
 
@@ -272,7 +275,7 @@ export class MediaController {
       throw new BadRequestException('Missing file or path parameter');
     }
     const resolved = this.mediaService.resolveMediaFilePath(target);
-    this.checkVaultAccess(resolved, headerVaultToken || queryVaultToken);
+    this.checkVaultAccess(resolved, headerVaultToken || queryVaultToken, req);
 
     const ext = path.extname(resolved).toLowerCase();
     const isHeic = ext === '.heic' || ext === '.heif';

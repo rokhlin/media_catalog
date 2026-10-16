@@ -302,6 +302,8 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
       CREATE TABLE IF NOT EXISTS vault_items (
         file_path TEXT PRIMARY KEY,
+        original_path TEXT,
+        vault_physical_path TEXT,
         added_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
         notes TEXT
       );
@@ -520,6 +522,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
           recovery_email: 'TEXT',
           recovery_code: 'TEXT',
           recovery_code_expires_at: 'INTEGER',
+          is_custom_pin: 'INTEGER NOT NULL DEFAULT 0',
         };
         for (const [col, type] of Object.entries(vcAdditions)) {
           if (!vcCols.has(col)) {
@@ -528,6 +531,22 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         }
       } catch {
         // vault_config table might not be in this db yet
+      }
+
+      // Migrate vault_items columns if missing
+      try {
+        const viCols = new Set((db.pragma('table_info(vault_items)') as any[]).map((c: any) => c.name.toLowerCase()));
+        const viAdditions: Record<string, string> = {
+          original_path: 'TEXT',
+          vault_physical_path: 'TEXT',
+        };
+        for (const [col, type] of Object.entries(viAdditions)) {
+          if (!viCols.has(col)) {
+            db.exec(`ALTER TABLE vault_items ADD COLUMN ${col} ${type};`);
+          }
+        }
+      } catch {
+        // vault_items table might not be in this db yet
       }
 
       // Seed default admin account if no users exist
@@ -2219,6 +2238,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     recoveryEmail?: string;
     recoveryCode?: string;
     recoveryCodeExpiresAt?: number;
+    isCustomPin?: boolean;
   }): any {
     const vdb = this.getVaultDb();
     const current = this.getVaultConfig();
@@ -2230,10 +2250,14 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     const recoveryEmail = config.recoveryEmail !== undefined ? config.recoveryEmail : current?.recovery_email ?? null;
     const recoveryCode = config.recoveryCode !== undefined ? config.recoveryCode : current?.recovery_code ?? null;
     const recoveryExpires = config.recoveryCodeExpiresAt !== undefined ? config.recoveryCodeExpiresAt : current?.recovery_code_expires_at ?? null;
+    // is_custom_pin: once set to 1 (true), never revert to 0 unless explicitly passed false
+    const isCustomPinNum = config.isCustomPin !== undefined
+      ? (config.isCustomPin ? 1 : 0)
+      : (current?.is_custom_pin ?? 0);
 
     vdb.prepare(`
-      INSERT INTO vault_config (id, pin_hash, pin_salt, vault_folder, is_enabled, auto_lock_minutes, recovery_email, recovery_code, recovery_code_expires_at, created_at, updated_at)
-      VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+      INSERT INTO vault_config (id, pin_hash, pin_salt, vault_folder, is_enabled, auto_lock_minutes, recovery_email, recovery_code, recovery_code_expires_at, is_custom_pin, created_at, updated_at)
+      VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
       ON CONFLICT(id) DO UPDATE SET
         pin_hash = excluded.pin_hash,
         pin_salt = excluded.pin_salt,
@@ -2243,8 +2267,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         recovery_email = excluded.recovery_email,
         recovery_code = excluded.recovery_code,
         recovery_code_expires_at = excluded.recovery_code_expires_at,
+        is_custom_pin = excluded.is_custom_pin,
         updated_at = datetime('now', 'localtime')
-    `).run(pinHash, pinSalt, vaultFolder, isEnabledNum, autoLock, recoveryEmail, recoveryCode, recoveryExpires);
+    `).run(pinHash, pinSalt, vaultFolder, isEnabledNum, autoLock, recoveryEmail, recoveryCode, recoveryExpires, isCustomPinNum);
 
     // Also mirror to main db for consistency
     try {
@@ -2288,6 +2313,48 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     const vaultDb = this.getVaultDb();
     const norm = filePath.replace(/\\/g, '/');
 
+    // --- Physical file move to storage/.vault/files/ ---
+    const projectRoot = (this.config as any)?.projectRoot || process.cwd();
+    const vaultFilesDir = path.resolve(projectRoot, 'storage', '.vault', 'files');
+    if (!fs.existsSync(vaultFilesDir)) {
+      fs.mkdirSync(vaultFilesDir, { recursive: true });
+    }
+
+    const originalAbsPath = path.resolve(filePath);
+    const fileName = path.basename(originalAbsPath);
+    let vaultPhysicalPath = path.join(vaultFilesDir, fileName);
+
+    // Resolve name collision in vault directory
+    if (fs.existsSync(vaultPhysicalPath) && vaultPhysicalPath !== originalAbsPath) {
+      const { name, ext } = path.parse(fileName);
+      let counter = 1;
+      while (fs.existsSync(path.join(vaultFilesDir, `${name} (${counter})${ext}`))) counter++;
+      vaultPhysicalPath = path.join(vaultFilesDir, `${name} (${counter})${ext}`);
+    }
+
+    // Physically move the file (rename first; fallback copy+unlink across filesystems)
+    const sourceExists = fs.existsSync(originalAbsPath);
+    if (sourceExists && originalAbsPath !== vaultPhysicalPath) {
+      try {
+        fs.renameSync(originalAbsPath, vaultPhysicalPath);
+      } catch {
+        try {
+          fs.copyFileSync(originalAbsPath, vaultPhysicalPath);
+          fs.unlinkSync(originalAbsPath);
+        } catch (copyErr) {
+          this.logger.error(`addVaultItem: failed to move file physically: ${copyErr}`);
+          // Use original path as vault physical path if move failed
+          vaultPhysicalPath = originalAbsPath;
+        }
+      }
+    } else if (!sourceExists) {
+      // File may already be in vault dir from a prior partial operation
+      vaultPhysicalPath = originalAbsPath;
+    }
+
+    const vaultNorm = vaultPhysicalPath.replace(/\\/g, '/');
+    const originalNorm = originalAbsPath.replace(/\\/g, '/');
+
     // 1. Fetch item from mainDb
     const mediaRow = mainDb.prepare(`
       SELECT * FROM media_items
@@ -2300,16 +2367,16 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       const tagRows = mainDb.prepare(`SELECT * FROM media_tags WHERE media_id = ?`).all(mediaRow.id) as any[];
       const faceRows = mainDb.prepare(`SELECT * FROM media_faces WHERE media_id = ?`).all(mediaRow.id) as any[];
 
-      // Insert into isolated vaultDb
+      // Insert into isolated vaultDb with new vault physical path
       const vTrans = vaultDb.transaction(() => {
         vaultDb.prepare(`
           INSERT INTO media_items (id, file_path, file_name, folder, media_type, file_size, mtime, duration, media_date, phash, sidecar_path, is_vault, status, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
-          ON CONFLICT(file_path) DO UPDATE SET is_vault = 1, updated_at = datetime('now', 'localtime')
+          ON CONFLICT(file_path) DO UPDATE SET is_vault = 1, file_path = excluded.file_path, updated_at = datetime('now', 'localtime')
         `).run(
           mediaRow.id,
-          norm,
-          mediaRow.file_name,
+          vaultNorm,
+          path.basename(vaultPhysicalPath),
           mediaRow.folder,
           mediaRow.media_type,
           mediaRow.file_size,
@@ -2376,32 +2443,38 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         }
 
         vaultDb.prepare(`
-          INSERT INTO vault_items (file_path, notes, added_at)
-          VALUES (?, ?, datetime('now', 'localtime'))
-          ON CONFLICT(file_path) DO UPDATE SET notes = COALESCE(excluded.notes, vault_items.notes)
-        `).run(norm, notes || null);
+          INSERT INTO vault_items (file_path, original_path, vault_physical_path, notes, added_at)
+          VALUES (?, ?, ?, ?, datetime('now', 'localtime'))
+          ON CONFLICT(file_path) DO UPDATE SET
+            original_path = COALESCE(excluded.original_path, vault_items.original_path),
+            vault_physical_path = COALESCE(excluded.vault_physical_path, vault_items.vault_physical_path),
+            notes = COALESCE(excluded.notes, vault_items.notes)
+        `).run(vaultNorm, originalNorm, vaultNorm, notes || null);
       });
       vTrans();
     } else {
       vaultDb.prepare(`
-        INSERT INTO vault_items (file_path, notes, added_at)
-        VALUES (?, ?, datetime('now', 'localtime'))
-        ON CONFLICT(file_path) DO UPDATE SET notes = COALESCE(excluded.notes, vault_items.notes)
-      `).run(norm, notes || null);
+        INSERT INTO vault_items (file_path, original_path, vault_physical_path, notes, added_at)
+        VALUES (?, ?, ?, ?, datetime('now', 'localtime'))
+        ON CONFLICT(file_path) DO UPDATE SET
+          original_path = COALESCE(excluded.original_path, vault_items.original_path),
+          vault_physical_path = COALESCE(excluded.vault_physical_path, vault_items.vault_physical_path),
+          notes = COALESCE(excluded.notes, vault_items.notes)
+      `).run(vaultNorm, originalNorm, vaultNorm, notes || null);
     }
 
-    // Flag as vault in mainDb to strictly hide from general gallery & search
+    // Flag as vault in mainDb & update file_path to vault physical path
     mainDb.prepare(`
-      UPDATE media_items SET is_vault = 1, updated_at = datetime('now', 'localtime')
+      UPDATE media_items SET is_vault = 1, file_path = ?, updated_at = datetime('now', 'localtime')
       WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
-    `).run(filePath, norm, norm);
+    `).run(vaultNorm, filePath, norm, norm);
 
-    mainDb.prepare(`
-      INSERT INTO vault_items (file_path, notes, added_at)
-      VALUES (?, ?, datetime('now', 'localtime'))
-      ON CONFLICT(file_path) DO UPDATE SET notes = COALESCE(excluded.notes, vault_items.notes)
-    `).run(norm, notes || null);
+    // Remove from mainDb vault_items (they now live only in vaultDb)
+    try {
+      mainDb.prepare(`DELETE FROM vault_items WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)`).run(filePath, norm, norm);
+    } catch { /* ignore */ }
 
+    this.logger.log(`addVaultItem: '${fileName}' moved to vault at '${vaultPhysicalPath}'`);
     return true;
   }
 
@@ -2410,15 +2483,107 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     const vaultDb = this.getVaultDb();
     const norm = filePath.replace(/\\/g, '/');
 
+    // --- Look up original_path from vault DB ---
+    let originalPath: string | null = null;
+    let vaultPhysicalPath: string | null = null;
+    try {
+      const vRow = vaultDb.prepare(`
+        SELECT original_path, vault_physical_path FROM vault_items
+        WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
+        LIMIT 1
+      `).get(filePath, norm, norm) as any;
+      if (vRow) {
+        originalPath = vRow.original_path || null;
+        vaultPhysicalPath = vRow.vault_physical_path || filePath;
+      }
+    } catch { /* ignore */ }
+
+    // --- Physical restore to original_path ---
+    if (originalPath) {
+      const srcPath = vaultPhysicalPath || filePath;
+      let destPath = originalPath;
+
+      // Ensure destination directory exists
+      try {
+        fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      } catch { /* ignore */ }
+
+      // Collision: if destination file already exists, append (N) suffix
+      if (fs.existsSync(destPath)) {
+        const { name, ext, dir } = path.parse(destPath);
+        let counter = 1;
+        while (fs.existsSync(path.join(dir, `${name} (${counter})${ext}`))) counter++;
+        destPath = path.join(dir, `${name} (${counter})${ext}`);
+      }
+
+      if (fs.existsSync(srcPath)) {
+        try {
+          fs.renameSync(srcPath, destPath);
+        } catch {
+          try {
+            fs.copyFileSync(srcPath, destPath);
+            fs.unlinkSync(srcPath);
+          } catch (copyErr) {
+            this.logger.error(`removeVaultItem: failed to restore file physically: ${copyErr}`);
+            destPath = srcPath; // keep at vault path if restore failed
+          }
+        }
+        this.logger.log(`removeVaultItem: restored '${path.basename(srcPath)}' to '${destPath}'`);
+      }
+
+      // Restore media_items record in mainDb with restored path
+      const destNorm = destPath.replace(/\\/g, '/');
+      const mediaRow = vaultDb.prepare(`
+        SELECT * FROM media_items
+        WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
+        LIMIT 1
+      `).get(filePath, norm, norm) as any;
+
+      if (mediaRow) {
+        mainDb.prepare(`
+          INSERT INTO media_items (id, file_path, file_name, folder, media_type, file_size, mtime, duration, media_date, phash, sidecar_path, is_vault, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, datetime('now', 'localtime'))
+          ON CONFLICT(file_path) DO UPDATE SET is_vault = 0, file_path = excluded.file_path, updated_at = datetime('now', 'localtime')
+        `).run(
+          mediaRow.id,
+          destNorm,
+          path.basename(destPath),
+          mediaRow.folder,
+          mediaRow.media_type,
+          mediaRow.file_size,
+          mediaRow.mtime,
+          mediaRow.duration,
+          mediaRow.media_date,
+          mediaRow.phash,
+          mediaRow.sidecar_path,
+          mediaRow.status,
+          mediaRow.created_at
+        );
+      } else {
+        // Fallback: just clear is_vault flag on any matching record
+        mainDb.prepare(`
+          UPDATE media_items SET is_vault = 0, file_path = ?, updated_at = datetime('now', 'localtime')
+          WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
+        `).run(destNorm, filePath, norm, norm);
+      }
+    } else {
+      // No original_path stored — just un-flag in mainDb
+      mainDb.prepare(`
+        UPDATE media_items SET is_vault = 0, updated_at = datetime('now', 'localtime')
+        WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
+      `).run(filePath, norm, norm);
+    }
+
+    // Remove from vault DB
     try {
       vaultDb.prepare(`DELETE FROM vault_items WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)`).run(filePath, norm, norm);
       vaultDb.prepare(`DELETE FROM media_items WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)`).run(filePath, norm, norm);
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
 
-    mainDb.prepare(`DELETE FROM vault_items WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)`).run(filePath, norm, norm);
-    mainDb.prepare(`UPDATE media_items SET is_vault = 0, updated_at = datetime('now', 'localtime') WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)`).run(filePath, norm, norm);
+    // Ensure removed from mainDb vault_items as well
+    try {
+      mainDb.prepare(`DELETE FROM vault_items WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)`).run(filePath, norm, norm);
+    } catch { /* ignore */ }
 
     return true;
   }

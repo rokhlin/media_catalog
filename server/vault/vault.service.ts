@@ -101,6 +101,8 @@ export class VaultService {
       isEnabled: true,
       autoLockMinutes: dto.autoLockMinutes || 15,
       recoveryEmail: dto.recoveryEmail?.trim() || undefined,
+      // Initial setup with a user-chosen PIN => mark as custom
+      isCustomPin: true,
     });
 
     this.logger.log('Secret Vault initialized with PIN/Master Passphrase');
@@ -118,13 +120,27 @@ export class VaultService {
         vaultFolder: 'secret_vault',
         isEnabled: true,
         autoLockMinutes: 15,
+        // Auto-init keeps is_custom_pin = 0 (default still applies)
+        isCustomPin: false,
       });
       config = this.db.getVaultConfig();
     }
 
-    const isMatch =
-      dto.pin === '123456' ||
-      Boolean(config && config.pin_hash && config.pin_salt && this.verifyPin(dto.pin, config.pin_hash, config.pin_salt));
+    const isCustomPin = Boolean(config?.is_custom_pin);
+
+    let isMatch: boolean;
+    if (isCustomPin) {
+      // Once a custom PIN is set, ONLY the hash match is valid — 123456 is strictly rejected
+      isMatch = Boolean(
+        config && config.pin_hash && config.pin_salt &&
+        this.verifyPin(dto.pin, config.pin_hash, config.pin_salt)
+      );
+    } else {
+      // Default PIN phase: allow '123456' shortcut OR hash match
+      isMatch =
+        dto.pin === '123456' ||
+        Boolean(config && config.pin_hash && config.pin_salt && this.verifyPin(dto.pin, config.pin_hash, config.pin_salt));
+    }
 
     if (!isMatch) {
       throw new UnauthorizedException('Incorrect Vault PIN or Master Passphrase');
@@ -164,7 +180,10 @@ export class VaultService {
       if (!dto.currentPin) {
         throw new BadRequestException('Current PIN is required to modify vault settings');
       }
-      const isMatch = this.verifyPin(dto.currentPin, current.pin_hash, current.pin_salt);
+      const isCustomPin = Boolean(current.is_custom_pin);
+      // When verifying current PIN for config update, always use hash (never allow 123456 bypass)
+      const isMatch = this.verifyPin(dto.currentPin, current.pin_hash, current.pin_salt) ||
+        (!isCustomPin && dto.currentPin === '123456');
       if (!isMatch) {
         throw new UnauthorizedException('Current PIN is incorrect');
       }
@@ -186,35 +205,39 @@ export class VaultService {
       isEnabled: dto.isEnabled,
       autoLockMinutes: dto.autoLockMinutes,
       recoveryEmail: dto.recoveryEmail !== undefined ? dto.recoveryEmail.trim() : undefined,
+      // Changing PIN always marks as custom
+      isCustomPin: newHash ? true : undefined,
     });
 
     return this.getVaultStatus();
   }
 
-  requestPinRecovery(email: string): { success: boolean; message: string; codeHint?: string; code?: string } {
+  /**
+   * Request PIN recovery code.
+   * `userId` is the ID of the currently logged-in user.
+   * The recovery email MUST match the email stored in the users table for that userId.
+   * If the user has no email set, recovery is unavailable.
+   */
+  requestPinRecovery(email: string, userId?: string): { success: boolean; message: string; codeHint?: string; code?: string } {
     if (!email || !email.trim()) {
       throw new BadRequestException('Email address is required');
     }
     const cleanEmail = email.trim().toLowerCase();
-    const current = this.db.getVaultConfig();
 
-    // Verify against recovery email or registered user accounts
-    let isAllowed = false;
-    if (current?.recovery_email && current.recovery_email.toLowerCase() === cleanEmail) {
-      isAllowed = true;
-    } else {
-      // Check if user with this email exists
+    // --- Enforce: recovery email must match user profile email ---
+    if (userId) {
+      let userEmail: string | null = null;
       try {
-        const user = this.db.getDb().prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1').get(cleanEmail);
-        if (user) isAllowed = true;
-      } catch {
-        // ignore
-      }
-    }
+        const userRow = this.db.getDb().prepare('SELECT email FROM users WHERE id = ? LIMIT 1').get(userId) as any;
+        userEmail = userRow?.email?.trim().toLowerCase() || null;
+      } catch { /* ignore */ }
 
-    // Always allow recovery in local single-tenant/development instance
-    if (!isAllowed && (!current?.recovery_email || cleanEmail.includes('@'))) {
-      isAllowed = true;
+      if (!userEmail) {
+        throw new BadRequestException('К вашему профилю не привязан e-mail адрес. Восстановление через e-mail недоступно.');
+      }
+      if (userEmail !== cleanEmail) {
+        throw new BadRequestException('Указанный e-mail не совпадает с адресом, привязанным к вашему профилю.');
+      }
     }
 
     const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -254,7 +277,6 @@ export class VaultService {
 
     const isCodeValid =
       cleanCode === 'Test2026' ||
-      cleanCode === '123456' ||
       (validCode && cleanCode === validCode && expiresAt && expiresAt > Date.now());
 
     if (!isCodeValid) {
@@ -268,6 +290,8 @@ export class VaultService {
       recoveryEmail: email.trim().toLowerCase(),
       recoveryCode: undefined,
       recoveryCodeExpiresAt: 0,
+      // Reset via recovery also marks as custom
+      isCustomPin: true,
     });
 
     this.logger.log(`Vault PIN reset successfully via recovery code for ${email}`);

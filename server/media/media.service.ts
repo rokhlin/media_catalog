@@ -1729,7 +1729,7 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       if (this.filePathMap.has(subpath.toLowerCase())) return this.filePathMap.get(subpath.toLowerCase())!;
     }
 
-    // 4. Test candidate paths in input and output folders
+    // 4. Test candidate paths in input and output folders (including secure vault storage)
     const candidateFolders = [
       ...this.config.inputFolders,
       this.config.outputFolder,
@@ -1737,6 +1737,8 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       '/app/media_output',
       path.resolve(this.config.projectRoot, 'media_input'),
       path.resolve(this.config.projectRoot, 'media_output'),
+      // Vault physical file storage — needed for thumbnail/file serving of vault items
+      path.resolve(this.config.projectRoot, 'storage', '.vault', 'files'),
     ];
 
     for (const folder of candidateFolders) {
