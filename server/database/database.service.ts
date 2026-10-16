@@ -10,6 +10,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DatabaseService.name);
   private db: Database | null = null;
   private readonly userDbs = new Map<string, Database>();
+  private vaultDbInstance: Database | null = null;
 
   constructor(@Inject(AppConfigService) private readonly config: AppConfigService) {}
 
@@ -74,6 +75,34 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     return this.getDb();
   }
 
+  public getVaultDb(): Database {
+    if (this.vaultDbInstance && this.vaultDbInstance.open) {
+      return this.vaultDbInstance;
+    }
+
+    const projectRoot = (this.config as any)?.projectRoot || process.cwd();
+    const vaultDir = path.resolve(projectRoot, 'storage', '.vault');
+    if (!fs.existsSync(vaultDir)) {
+      fs.mkdirSync(vaultDir, { recursive: true });
+    }
+    const vaultDbPath = path.join(vaultDir, 'vault_history.db');
+
+    const vdb = new DatabaseConstructor(vaultDbPath, { timeout: 30000 });
+    vdb.pragma('journal_mode = WAL');
+    vdb.pragma('busy_timeout = 30000');
+    vdb.pragma('foreign_keys = ON');
+    vdb.pragma('synchronous = NORMAL');
+    vdb.pragma('cache_size = -32000');
+
+    this.createTables(vdb);
+    this.migrateSchema(vdb);
+    this.createIndexes(vdb);
+
+    this.vaultDbInstance = vdb;
+    this.logger.log(`Isolated Vault SQLite database connected at: ${vaultDbPath}`);
+    return vdb;
+  }
+
   public close() {
     for (const [userId, udb] of this.userDbs.entries()) {
       try {
@@ -83,6 +112,15 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       }
     }
     this.userDbs.clear();
+
+    if (this.vaultDbInstance) {
+      try {
+        if (this.vaultDbInstance.open) this.vaultDbInstance.close();
+      } catch (err) {
+        this.logger.error(`Error closing vault database: ${err}`);
+      }
+      this.vaultDbInstance = null;
+    }
 
     if (this.db) {
       try {
@@ -255,6 +293,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         vault_folder TEXT,
         is_enabled INTEGER NOT NULL DEFAULT 1,
         auto_lock_minutes INTEGER NOT NULL DEFAULT 15,
+        recovery_email TEXT,
+        recovery_code TEXT,
+        recovery_code_expires_at INTEGER,
         created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
       );
@@ -470,6 +511,23 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         if (!mmCols.has(col)) {
           db.exec(`ALTER TABLE media_metadata ADD COLUMN ${col} ${type};`);
         }
+      }
+
+      // Migrate vault_config columns if missing
+      try {
+        const vcCols = new Set((db.pragma('table_info(vault_config)') as any[]).map((c: any) => c.name.toLowerCase()));
+        const vcAdditions: Record<string, string> = {
+          recovery_email: 'TEXT',
+          recovery_code: 'TEXT',
+          recovery_code_expires_at: 'INTEGER',
+        };
+        for (const [col, type] of Object.entries(vcAdditions)) {
+          if (!vcCols.has(col)) {
+            db.exec(`ALTER TABLE vault_config ADD COLUMN ${col} ${type};`);
+          }
+        }
+      } catch {
+        // vault_config table might not be in this db yet
       }
 
       // Seed default admin account if no users exist
@@ -2122,9 +2180,29 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
 
   // --- Secret Vault Storage & Config ---
+  // --- Secret Vault Storage & Config (Isolated in vault_history.db) ---
   getVaultConfig(): any {
-    const db = this.getDb();
-    const row = db.prepare('SELECT * FROM vault_config WHERE id = 1').get() as any;
+    const vdb = this.getVaultDb();
+    let row = vdb.prepare('SELECT * FROM vault_config WHERE id = 1').get() as any;
+    if (!row) {
+      // Migrate from main db if exists
+      try {
+        const mainRow = this.getDb().prepare('SELECT * FROM vault_config WHERE id = 1').get() as any;
+        if (mainRow && mainRow.pin_hash) {
+          this.saveVaultConfig({
+            pinHash: mainRow.pin_hash,
+            pinSalt: mainRow.pin_salt,
+            vaultFolder: mainRow.vault_folder,
+            isEnabled: Boolean(mainRow.is_enabled),
+            autoLockMinutes: mainRow.auto_lock_minutes,
+            recoveryEmail: mainRow.recovery_email,
+          });
+          row = vdb.prepare('SELECT * FROM vault_config WHERE id = 1').get() as any;
+        }
+      } catch {
+        // ignore
+      }
+    }
     if (!row) return null;
     return {
       ...row,
@@ -2139,87 +2217,313 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     vaultFolder?: string;
     isEnabled?: boolean;
     autoLockMinutes?: number;
+    recoveryEmail?: string;
+    recoveryCode?: string;
+    recoveryCodeExpiresAt?: number;
   }): any {
-    const db = this.getDb();
+    const vdb = this.getVaultDb();
     const current = this.getVaultConfig();
     const isEnabledNum = (config.isEnabled !== undefined ? config.isEnabled : current?.is_enabled ?? true) ? 1 : 0;
     const autoLock = config.autoLockMinutes !== undefined ? config.autoLockMinutes : current?.auto_lock_minutes ?? 15;
     const vaultFolder = config.vaultFolder !== undefined ? config.vaultFolder : current?.vault_folder ?? null;
     const pinHash = config.pinHash !== undefined ? config.pinHash : current?.pin_hash ?? null;
     const pinSalt = config.pinSalt !== undefined ? config.pinSalt : current?.pin_salt ?? null;
+    const recoveryEmail = config.recoveryEmail !== undefined ? config.recoveryEmail : current?.recovery_email ?? null;
+    const recoveryCode = config.recoveryCode !== undefined ? config.recoveryCode : current?.recovery_code ?? null;
+    const recoveryExpires = config.recoveryCodeExpiresAt !== undefined ? config.recoveryCodeExpiresAt : current?.recovery_code_expires_at ?? null;
 
-    db.prepare(`
-      INSERT INTO vault_config (id, pin_hash, pin_salt, vault_folder, is_enabled, auto_lock_minutes, created_at, updated_at)
-      VALUES (1, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+    vdb.prepare(`
+      INSERT INTO vault_config (id, pin_hash, pin_salt, vault_folder, is_enabled, auto_lock_minutes, recovery_email, recovery_code, recovery_code_expires_at, created_at, updated_at)
+      VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
       ON CONFLICT(id) DO UPDATE SET
         pin_hash = excluded.pin_hash,
         pin_salt = excluded.pin_salt,
         vault_folder = excluded.vault_folder,
         is_enabled = excluded.is_enabled,
         auto_lock_minutes = excluded.auto_lock_minutes,
+        recovery_email = excluded.recovery_email,
+        recovery_code = excluded.recovery_code,
+        recovery_code_expires_at = excluded.recovery_code_expires_at,
         updated_at = datetime('now', 'localtime')
-    `).run(pinHash, pinSalt, vaultFolder, isEnabledNum, autoLock);
+    `).run(pinHash, pinSalt, vaultFolder, isEnabledNum, autoLock, recoveryEmail, recoveryCode, recoveryExpires);
+
+    // Also mirror to main db for consistency
+    try {
+      this.getDb().prepare(`
+        INSERT INTO vault_config (id, pin_hash, pin_salt, vault_folder, is_enabled, auto_lock_minutes, recovery_email, recovery_code, recovery_code_expires_at, created_at, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+        ON CONFLICT(id) DO UPDATE SET
+          pin_hash = excluded.pin_hash,
+          pin_salt = excluded.pin_salt,
+          vault_folder = excluded.vault_folder,
+          is_enabled = excluded.is_enabled,
+          auto_lock_minutes = excluded.auto_lock_minutes,
+          recovery_email = excluded.recovery_email,
+          recovery_code = excluded.recovery_code,
+          recovery_code_expires_at = excluded.recovery_code_expires_at,
+          updated_at = datetime('now', 'localtime')
+      `).run(pinHash, pinSalt, vaultFolder, isEnabledNum, autoLock, recoveryEmail, recoveryCode, recoveryExpires);
+    } catch {
+      // ignore
+    }
 
     return this.getVaultConfig();
   }
 
   listVaultItems(): string[] {
-    const db = this.getDb();
-    const rows = db.prepare('SELECT file_path FROM vault_items').all() as any[];
+    const vdb = this.getVaultDb();
+    const rows = vdb.prepare('SELECT file_path FROM vault_items').all() as any[];
+    if (rows.length === 0) {
+      try {
+        const mRows = this.getDb().prepare('SELECT file_path FROM vault_items').all() as any[];
+        return mRows.map((r) => r.file_path);
+      } catch {
+        return [];
+      }
+    }
     return rows.map((r) => r.file_path);
   }
 
   addVaultItem(filePath: string, notes?: string): boolean {
-    const db = this.getDb();
+    const mainDb = this.getDb();
+    const vaultDb = this.getVaultDb();
     const norm = filePath.replace(/\\/g, '/');
-    const transaction = db.transaction(() => {
-      db.prepare(`
+
+    // 1. Fetch item from mainDb
+    const mediaRow = mainDb.prepare(`
+      SELECT * FROM media_items
+      WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
+      LIMIT 1
+    `).get(filePath, norm, norm) as any;
+
+    if (mediaRow) {
+      const metaRow = mainDb.prepare(`SELECT * FROM media_metadata WHERE media_id = ?`).get(mediaRow.id) as any;
+      const tagRows = mainDb.prepare(`SELECT * FROM media_tags WHERE media_id = ?`).all(mediaRow.id) as any[];
+      const faceRows = mainDb.prepare(`SELECT * FROM media_faces WHERE media_id = ?`).all(mediaRow.id) as any[];
+
+      // Insert into isolated vaultDb
+      const vTrans = vaultDb.transaction(() => {
+        vaultDb.prepare(`
+          INSERT INTO media_items (id, file_path, file_name, folder, media_type, file_size, mtime, duration, media_date, phash, sidecar_path, is_vault, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+          ON CONFLICT(file_path) DO UPDATE SET is_vault = 1, updated_at = datetime('now', 'localtime')
+        `).run(
+          mediaRow.id,
+          norm,
+          mediaRow.file_name,
+          mediaRow.folder,
+          mediaRow.media_type,
+          mediaRow.file_size,
+          mediaRow.mtime,
+          mediaRow.duration,
+          mediaRow.media_date,
+          mediaRow.phash,
+          mediaRow.sidecar_path,
+          mediaRow.status
+        );
+
+        if (metaRow) {
+          vaultDb.prepare(`
+            INSERT INTO media_metadata (media_id, summary, summary_ru, description, description_ru, environment, lighting, lighting_ru, weather, weather_ru, time_of_day, time_of_day_ru, ocr_text, camera_make, camera_model, latitude, longitude, location_name, exif_analysis, exif_analysis_ru, transcription, transcription_ru, timeline_events, raw_exif, raw_gemini, raw_defects)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(media_id) DO UPDATE SET
+              summary = excluded.summary,
+              summary_ru = excluded.summary_ru,
+              description = excluded.description,
+              description_ru = excluded.description_ru,
+              ocr_text = excluded.ocr_text
+          `).run(
+            metaRow.media_id,
+            metaRow.summary,
+            metaRow.summary_ru,
+            metaRow.description,
+            metaRow.description_ru,
+            metaRow.environment,
+            metaRow.lighting,
+            metaRow.lighting_ru,
+            metaRow.weather,
+            metaRow.weather_ru,
+            metaRow.time_of_day,
+            metaRow.time_of_day_ru,
+            metaRow.ocr_text,
+            metaRow.camera_make,
+            metaRow.camera_model,
+            metaRow.latitude,
+            metaRow.longitude,
+            metaRow.location_name,
+            metaRow.exif_analysis,
+            metaRow.exif_analysis_ru,
+            metaRow.transcription,
+            metaRow.transcription_ru,
+            metaRow.timeline_events,
+            metaRow.raw_exif,
+            metaRow.raw_gemini,
+            metaRow.raw_defects
+          );
+        }
+
+        for (const t of tagRows) {
+          vaultDb.prepare(`
+            INSERT OR IGNORE INTO media_tags (media_id, tag, category, confidence)
+            VALUES (?, ?, ?, ?)
+          `).run(t.media_id, t.tag, t.category, t.confidence);
+        }
+
+        for (const f of faceRows) {
+          vaultDb.prepare(`
+            INSERT INTO media_faces (media_id, face_id, person_id, name, confidence, bbox, image_path, time_start, time_end, time_intervals, is_reference, source_file)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(f.media_id, f.face_id, f.person_id, f.name, f.confidence, f.bbox, f.image_path, f.time_start, f.time_end, f.time_intervals, f.is_reference, f.source_file);
+        }
+
+        vaultDb.prepare(`
+          INSERT INTO vault_items (file_path, notes, added_at)
+          VALUES (?, ?, datetime('now', 'localtime'))
+          ON CONFLICT(file_path) DO UPDATE SET notes = COALESCE(excluded.notes, vault_items.notes)
+        `).run(norm, notes || null);
+      });
+      vTrans();
+    } else {
+      vaultDb.prepare(`
         INSERT INTO vault_items (file_path, notes, added_at)
         VALUES (?, ?, datetime('now', 'localtime'))
         ON CONFLICT(file_path) DO UPDATE SET notes = COALESCE(excluded.notes, vault_items.notes)
       `).run(norm, notes || null);
+    }
 
-      db.prepare(`
-        UPDATE media_items SET is_vault = 1, updated_at = datetime('now', 'localtime')
-        WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
-      `).run(filePath, norm, norm);
-    });
+    // Flag as vault in mainDb to strictly hide from general gallery & search
+    mainDb.prepare(`
+      UPDATE media_items SET is_vault = 1, updated_at = datetime('now', 'localtime')
+      WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
+    `).run(filePath, norm, norm);
 
-    transaction();
+    mainDb.prepare(`
+      INSERT INTO vault_items (file_path, notes, added_at)
+      VALUES (?, ?, datetime('now', 'localtime'))
+      ON CONFLICT(file_path) DO UPDATE SET notes = COALESCE(excluded.notes, vault_items.notes)
+    `).run(norm, notes || null);
+
     return true;
   }
 
   removeVaultItem(filePath: string): boolean {
-    const db = this.getDb();
+    const mainDb = this.getDb();
+    const vaultDb = this.getVaultDb();
     const norm = filePath.replace(/\\/g, '/');
-    const transaction = db.transaction(() => {
-      db.prepare(`
-        DELETE FROM vault_items
-        WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
-      `).run(filePath, norm, norm);
 
-      db.prepare(`
-        UPDATE media_items SET is_vault = 0, updated_at = datetime('now', 'localtime')
-        WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
-      `).run(filePath, norm, norm);
-    });
+    try {
+      vaultDb.prepare(`DELETE FROM vault_items WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)`).run(filePath, norm, norm);
+      vaultDb.prepare(`DELETE FROM media_items WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)`).run(filePath, norm, norm);
+    } catch {
+      // ignore
+    }
 
-    transaction();
+    mainDb.prepare(`DELETE FROM vault_items WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)`).run(filePath, norm, norm);
+    mainDb.prepare(`UPDATE media_items SET is_vault = 0, updated_at = datetime('now', 'localtime') WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)`).run(filePath, norm, norm);
+
     return true;
   }
 
+  listVaultMediaItems(): any[] {
+    const vaultDb = this.getVaultDb();
+    let rows: any[] = [];
+    try {
+      rows = vaultDb.prepare(`
+        SELECT m.*, meta.summary, meta.summary_ru, meta.description, meta.description_ru,
+               meta.environment, meta.lighting, meta.lighting_ru, meta.weather, meta.weather_ru,
+               meta.time_of_day, meta.time_of_day_ru, meta.ocr_text,
+               meta.camera_make, meta.camera_model, meta.latitude, meta.longitude,
+               meta.location_name, meta.exif_analysis, meta.exif_analysis_ru,
+               meta.transcription, meta.transcription_ru, meta.timeline_events
+        FROM media_items m
+        LEFT JOIN media_metadata meta ON m.id = meta.media_id
+        WHERE m.is_vault = 1
+      `).all() as any[];
+    } catch {
+      rows = [];
+    }
+
+    if (rows.length === 0) {
+      try {
+        rows = this.getDb().prepare(`
+          SELECT m.*, meta.summary, meta.summary_ru, meta.description, meta.description_ru,
+                 meta.environment, meta.lighting, meta.lighting_ru, meta.weather, meta.weather_ru,
+                 meta.time_of_day, meta.time_of_day_ru, meta.ocr_text,
+                 meta.camera_make, meta.camera_model, meta.latitude, meta.longitude,
+                 meta.location_name, meta.exif_analysis, meta.exif_analysis_ru,
+                 meta.transcription, meta.transcription_ru, meta.timeline_events
+          FROM media_items m
+          LEFT JOIN media_metadata meta ON m.id = meta.media_id
+          WHERE m.is_vault = 1
+        `).all() as any[];
+      } catch {
+        rows = [];
+      }
+    }
+
+    return rows.map((r) => {
+      const ext = path.extname(r.file_path || r.file_name || '').toLowerCase();
+      const isVideo = this.config.supportedVideoExts.has(ext) || r.media_type === 'video';
+      const isImage = this.config.supportedPhotoExts.has(ext) || r.media_type === 'photo';
+
+      return {
+        id: r.id,
+        file_path: r.file_path,
+        filename: r.file_name || path.basename(r.file_path),
+        folder: r.folder,
+        media_type: r.media_type || (isVideo ? 'video' : 'photo'),
+        type: isVideo ? 'video' : 'image',
+        is_video: isVideo,
+        is_image: isImage,
+        file_size: r.file_size,
+        mtime: r.mtime,
+        media_date: r.media_date,
+        is_vault: true,
+        summary: r.summary,
+        summary_ru: r.summary_ru,
+        description: r.description,
+        description_ru: r.description_ru,
+        lighting: r.lighting,
+        lighting_ru: r.lighting_ru,
+        weather: r.weather,
+        weather_ru: r.weather_ru,
+        time_of_day: r.time_of_day,
+        time_of_day_ru: r.time_of_day_ru,
+        ocr_text: r.ocr_text,
+        location_name: r.location_name,
+        exif_analysis: r.exif_analysis,
+        exif_analysis_ru: r.exif_analysis_ru,
+        latitude: r.latitude,
+        longitude: r.longitude,
+      };
+    });
+  }
+
   isItemInVault(filePath: string): boolean {
-    const db = this.getDb();
+    if (!filePath) return false;
     const norm = filePath.replace(/\\/g, '/');
-    const row = db.prepare(`
+
+    try {
+      const vdb = this.getVaultDb();
+      const vRow = vdb.prepare(`
+        SELECT 1 FROM vault_items
+        WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
+        LIMIT 1
+      `).get(filePath, norm, norm);
+      if (vRow) return true;
+    } catch {
+      // ignore
+    }
+
+    const mainDb = this.getDb();
+    const row = mainDb.prepare(`
       SELECT 1 FROM vault_items
       WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
       LIMIT 1
     `).get(filePath, norm, norm);
     if (row) return true;
 
-    // Also check if flagged in media_items
-    const miRow = db.prepare(`
+    const miRow = mainDb.prepare(`
       SELECT is_vault FROM media_items
       WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?)
       LIMIT 1

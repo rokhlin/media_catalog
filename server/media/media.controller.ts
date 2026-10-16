@@ -137,7 +137,25 @@ export class MediaController {
   @Get('files')
   @ApiOperation({ summary: 'List all media files discovered in input sources with pagination, search, filter and sorting' })
   @ApiResponse({ status: 200, description: 'Media file list with face detections, pagination and AI summaries' })
-  async listMediaFiles(@Query() query: ListMediaFilesQueryDto) {
+  async listMediaFiles(
+    @Query() query: ListMediaFilesQueryDto,
+    @Headers('x-vault-token') vaultToken?: string,
+  ) {
+    if (query?.vault === 'true') {
+      if (!this.vaultService.isVaultUnlocked(vaultToken)) {
+        throw new ForbiddenException('Личная папка заблокирована. Требуется ввод PIN-кода.');
+      }
+      const items = this.vaultService.listVaultMediaItems(vaultToken);
+      return {
+        items,
+        total: items.length,
+        processed: items.length,
+        photos: items.filter((i: any) => i.is_image).length,
+        videos: items.filter((i: any) => i.is_video).length,
+        offset: 0,
+        limit: items.length,
+      };
+    }
     return this.mediaService.listMediaFiles(query);
   }
 

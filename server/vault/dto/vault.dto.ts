@@ -17,7 +17,38 @@ export class SetupVaultDto {
   @IsNumber()
   @IsOptional()
   autoLockMinutes?: number;
+
+  @ApiPropertyOptional({ description: 'Optional recovery email address' })
+  @IsString()
+  @IsOptional()
+  recoveryEmail?: string;
 }
+
+export class RecoverVaultPinRequestDto {
+  @ApiProperty({ description: 'User account or registered recovery email address' })
+  @IsString()
+  @IsNotEmpty()
+  email!: string;
+}
+
+export class RecoverVaultPinResetDto {
+  @ApiProperty({ description: 'Email address' })
+  @IsString()
+  @IsNotEmpty()
+  email!: string;
+
+  @ApiProperty({ description: '6-digit recovery code' })
+  @IsString()
+  @IsNotEmpty()
+  recoveryCode!: string;
+
+  @ApiProperty({ description: 'New PIN or Master Passphrase (minimum 4 characters)' })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(4)
+  newPin!: string;
+}
+
 
 export class UnlockVaultDto {
   @ApiProperty({ description: 'PIN or Master Passphrase', example: '1234' })
@@ -64,4 +95,9 @@ export class UpdateVaultConfigDto {
   @IsNumber()
   @IsOptional()
   autoLockMinutes?: number;
+
+  @ApiPropertyOptional({ description: 'Recovery email address' })
+  @IsString()
+  @IsOptional()
+  recoveryEmail?: string;
 }

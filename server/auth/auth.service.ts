@@ -29,7 +29,7 @@ export const ALL_PERMISSIONS = [
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   admin: ['view_media', 'edit_metadata', 'manage_faces', 'admin_panel', 'vault_access', 'manage_users'],
   editor: ['view_media', 'edit_metadata', 'manage_faces', 'vault_access'],
-  viewer: ['view_media'],
+  viewer: ['view_media', 'vault_access'],
 };
 
 @Injectable()

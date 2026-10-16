@@ -17,6 +17,8 @@ import {
   UnlockVaultDto,
   VaultItemActionDto,
   UpdateVaultConfigDto,
+  RecoverVaultPinRequestDto,
+  RecoverVaultPinResetDto,
 } from './dto/vault.dto.js';
 import { JwtAuthGuard } from '../auth/auth.guard.js';
 import { RolesGuard } from '../auth/roles.guard.js';
@@ -38,29 +40,43 @@ export class VaultController {
 
   @Public()
   @Post('setup')
-  @ApiOperation({ summary: 'Set up master PIN for secret vault' })
+  @ApiOperation({ summary: 'Set up master PIN for personal folder' })
   async setup(@Body() dto: SetupVaultDto) {
     return this.vaultService.setupVault(dto);
   }
 
   @Public()
   @Post('unlock')
-  @ApiOperation({ summary: 'Unlock vault with PIN' })
+  @ApiOperation({ summary: 'Unlock personal folder with PIN' })
   async unlock(@Body() dto: UnlockVaultDto, @CurrentUser() user?: any) {
     return this.vaultService.unlockVault(dto, user?.sub);
   }
 
   @Public()
   @Post('lock')
-  @ApiOperation({ summary: 'Lock vault' })
+  @ApiOperation({ summary: 'Lock personal folder' })
   async lock(@Headers('x-vault-token') vaultToken?: string) {
     this.vaultService.lockVault(vaultToken);
-    return { success: true, message: 'Vault locked successfully' };
+    return { success: true, message: 'Personal folder locked successfully' };
+  }
+
+  @Public()
+  @Post('recover-request')
+  @ApiOperation({ summary: 'Request PIN recovery code via email' })
+  async requestRecovery(@Body() dto: RecoverVaultPinRequestDto) {
+    return this.vaultService.requestPinRecovery(dto.email);
+  }
+
+  @Public()
+  @Post('recover-reset')
+  @ApiOperation({ summary: 'Reset PIN using recovery code sent to email' })
+  async resetWithRecovery(@Body() dto: RecoverVaultPinResetDto) {
+    return this.vaultService.resetPinWithRecovery(dto.email, dto.recoveryCode, dto.newPin);
   }
 
   @Post('items')
   @RequirePermissions('vault_access')
-  @ApiOperation({ summary: 'Add a media item to secret vault' })
+  @ApiOperation({ summary: 'Add a media item to personal folder' })
   async addItem(@Body() dto: VaultItemActionDto) {
     const success = this.vaultService.addVaultItem(dto.filePath, dto.notes);
     return { success, filePath: dto.filePath, isVault: true };
@@ -68,7 +84,7 @@ export class VaultController {
 
   @Delete('items')
   @RequirePermissions('vault_access')
-  @ApiOperation({ summary: 'Remove a media item from secret vault' })
+  @ApiOperation({ summary: 'Remove a media item from personal folder' })
   async removeItem(@Query('file') queryFile: string, @Body() dto?: VaultItemActionDto) {
     const target = queryFile || dto?.filePath;
     if (!target) {
@@ -87,10 +103,26 @@ export class VaultController {
     return { files, count: files.length };
   }
 
+  @Get('media-items')
+  @RequirePermissions('vault_access')
+  @ApiOperation({ summary: 'List all media items in Personal Folder with metadata (Requires unlocked vault session)' })
+  @ApiHeader({ name: 'x-vault-token', required: true, description: 'Vault session unlock token' })
+  async listVaultMediaItems(@Headers('x-vault-token') vaultToken?: string) {
+    return this.vaultService.listVaultMediaItems(vaultToken);
+  }
+
   @Patch('config')
-  @RequirePermissions('admin_panel')
-  @ApiOperation({ summary: 'Update vault configuration or PIN (Admin)' })
+  @RequirePermissions('vault_access')
+  @ApiOperation({ summary: 'Update personal folder configuration or PIN' })
   async updateConfig(@Body() dto: UpdateVaultConfigDto) {
     return this.vaultService.updateConfig(dto);
   }
+
+  @Post('change-pin')
+  @RequirePermissions('vault_access')
+  @ApiOperation({ summary: 'Change personal folder PIN' })
+  async changePin(@Body() dto: UpdateVaultConfigDto) {
+    return this.vaultService.updateConfig(dto);
+  }
 }
+

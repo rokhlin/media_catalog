@@ -1473,6 +1473,9 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       this.cacheTimestamp = Date.now();
       this.hasInitialScanRun = true;
       return this.cachedMediaList;
+    } catch (err) {
+      this.logger.error(`Error in buildMediaIndex: ${err}`, (err as any)?.stack);
+      throw err;
     } finally {
       this.scanStatus.is_scanning = false;
       this.scanStatus.current_file = null;
@@ -1526,17 +1529,9 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
         });
       }
 
-      // If cache is empty, initial scan has not completed, or explicit refresh requested, wait for initial chunk
-      if (!this.cachedMediaList || !this.hasInitialScanRun || isRefresh) {
-        let waitIter = 0;
-        while (
-          this.scanStatus.is_scanning &&
-          (!this.cachedMediaList || this.cachedMediaList.length < targetCount) &&
-          waitIter < 30
-        ) {
-          waitIter++;
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
+      // If cache is empty, initial scan has not completed, or explicit refresh requested, wait for scan to finish
+      if (this.inFlightScanPromise && (!this.cachedMediaList || !this.hasInitialScanRun || isRefresh)) {
+        await this.inFlightScanPromise;
       }
     }
 
@@ -1563,16 +1558,37 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
     if (query) {
       const search = query.search?.trim().toLowerCase();
       if (search) {
+        const hasCyrillic = /[а-яА-ЯёЁ]/.test(search);
+        const hasLatin = /[a-zA-Z]/.test(search);
+
         filtered = filtered.filter((item) => {
-          const matchDesc = Boolean(item.description && item.description.toLowerCase().includes(search));
-          const matchDescRu = Boolean(item.description_ru && item.description_ru.toLowerCase().includes(search));
-          const matchSummary = Boolean(item.summary && item.summary.toLowerCase().includes(search));
-          const matchSummaryRu = Boolean(item.summary_ru && item.summary_ru.toLowerCase().includes(search));
           const matchName = Boolean(item.filename && item.filename.toLowerCase().includes(search));
           const matchFolder = Boolean(item.folder && item.folder.toLowerCase().includes(search));
           const matchFaces = Boolean(item.face_names && item.face_names.some((fn: string) => fn.toLowerCase().includes(search)));
           const matchOcr = Boolean(item.ocr_text && item.ocr_text.toLowerCase().includes(search));
-          return matchDesc || matchDescRu || matchSummary || matchSummaryRu || matchName || matchFolder || matchFaces || matchOcr;
+
+          if (hasCyrillic && !hasLatin) {
+            // Russian search query: search within Russian fields
+            const matchDescRu = Boolean(item.description_ru && item.description_ru.toLowerCase().includes(search));
+            const matchSummaryRu = Boolean(item.summary_ru && item.summary_ru.toLowerCase().includes(search));
+            const matchExifRu = Boolean(item.exif_analysis_ru && item.exif_analysis_ru.toLowerCase().includes(search));
+            const matchTransRu = Boolean(item.transcription_ru && item.transcription_ru.toLowerCase().includes(search));
+            return matchDescRu || matchSummaryRu || matchExifRu || matchTransRu || matchName || matchFolder || matchFaces || matchOcr;
+          } else if (hasLatin && !hasCyrillic) {
+            // English search query: search within English fields
+            const matchDesc = Boolean(item.description && item.description.toLowerCase().includes(search));
+            const matchSummary = Boolean(item.summary && item.summary.toLowerCase().includes(search));
+            const matchExif = Boolean(item.exif_analysis && item.exif_analysis.toLowerCase().includes(search));
+            const matchTrans = Boolean(item.transcription && item.transcription.toLowerCase().includes(search));
+            return matchDesc || matchSummary || matchExif || matchTrans || matchName || matchFolder || matchFaces || matchOcr;
+          } else {
+            // Mixed or other language: match across all fields
+            const matchDesc = Boolean(item.description && item.description.toLowerCase().includes(search));
+            const matchDescRu = Boolean(item.description_ru && item.description_ru.toLowerCase().includes(search));
+            const matchSummary = Boolean(item.summary && item.summary.toLowerCase().includes(search));
+            const matchSummaryRu = Boolean(item.summary_ru && item.summary_ru.toLowerCase().includes(search));
+            return matchDesc || matchDescRu || matchSummary || matchSummaryRu || matchName || matchFolder || matchFaces || matchOcr;
+          }
         });
       }
 
