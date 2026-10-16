@@ -1502,9 +1502,6 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
 
     const isRefresh = query?.refresh === true || query?.refresh === 'true';
     const now = Date.now();
-    const targetOffset = Number(query?.offset) || 0;
-    const targetLimit = Number(query?.limit) || 100;
-    const targetCount = targetOffset + targetLimit;
 
     // 1. If in-memory cache is empty and not a forced refresh, first hydrate instantly from SQLite
     if (!this.cachedMediaList && !isRefresh) {

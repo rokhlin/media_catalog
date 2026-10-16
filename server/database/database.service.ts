@@ -556,9 +556,8 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         if (!isTestEnv) {
           const activeDbNorm = path.resolve(this.config.dbPath).toLowerCase();
           const candidateDbPaths = [
-            'Y:/catalog_history.db',
-            'Y:\\catalog_history.db',
             path.resolve(this.config.projectRoot, 'media_output', 'catalog_history.db'),
+            path.resolve(this.config.projectRoot, 'data', 'catalog_history.db'),
           ];
           for (const cPath of candidateDbPaths) {
             if (fs.existsSync(cPath) && path.resolve(cPath).toLowerCase() !== activeDbNorm) {
