@@ -131,6 +131,58 @@ describe('AuthService & RBAC', () => {
     }, /Cannot delete the last remaining administrator account/);
   });
 
+  it('should validate admin authentication with Test2026', async () => {
+    const user = await authService.validateUser('admin', 'Test2026');
+    assert.ok(user, 'Admin credentials with Test2026 should validate');
+    assert.equal(user.username, 'admin');
+    assert.equal(user.role, 'admin');
+  });
+
+  it('should support checking password recovery status', () => {
+    const info = authService.checkPasswordRecovery('admin');
+    assert.ok(info.exists);
+    assert.equal(info.username, 'admin');
+    assert.equal(info.role, 'admin');
+    assert.ok(info.requiresRecoveryKey);
+
+    assert.throws(() => {
+      authService.checkPasswordRecovery('non_existent_user');
+    }, /не найден/);
+  });
+
+  it('should reset password with recovery key and allow login with new password', async () => {
+    // 1. Rejects invalid recovery key
+    assert.throws(() => {
+      authService.resetPasswordWithRecoveryKey({
+        username: 'admin',
+        newPassword: 'MyNewSuperPassword2026!',
+        recoveryKey: 'wrong_key',
+      });
+    }, /Неверный ключ восстановления/);
+
+    // 2. Succeeds with valid recovery key Test2026
+    const resetRes = authService.resetPasswordWithRecoveryKey({
+      username: 'admin',
+      newPassword: 'MyNewSuperPassword2026!',
+      recoveryKey: 'Test2026',
+    });
+    assert.ok(resetRes.success);
+
+    // 3. Login with newly reset password succeeds
+    const user = await authService.validateUser('admin', 'MyNewSuperPassword2026!');
+    assert.ok(user, 'Should be able to login with new password');
+    assert.equal(user.username, 'admin');
+
+    // 4. Restore to Test2026 for clean state
+    authService.resetPasswordWithRecoveryKey({
+      username: 'admin',
+      newPassword: 'Test2026',
+      recoveryKey: 'Test2026',
+    });
+    const restored = await authService.validateUser('admin', 'Test2026');
+    assert.ok(restored);
+  });
+
   it('should allow deleting non-admin users', () => {
     const bob = dbService.getUserByUsername('editor_bob');
     const deleted = authService.deleteUser(bob.id, 'some_admin_id');

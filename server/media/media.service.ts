@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger, Inject, Optional, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, Inject, Optional, OnModuleInit, OnModuleDestroy, forwardRef } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
@@ -7,6 +7,7 @@ import { DatabaseService } from '../database/database.service.js';
 import { FamilyTreePublicService } from '../family-tree/family-tree-public.service.js';
 import { ThumbnailService } from './thumbnail.service.js';
 import { UpdateMediaMetadataDto } from './dto/media.dto.js';
+import { CatalogerClientService } from '../cataloger-client/cataloger.service.js';
 
 export interface ScannedMediaFile {
   filePath: string;
@@ -45,6 +46,7 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
     @Inject(DatabaseService) private readonly db: DatabaseService,
     @Optional() @Inject(FamilyTreePublicService) private readonly familyTreePublicService?: FamilyTreePublicService,
     @Optional() @Inject(ThumbnailService) private readonly thumbnailService?: ThumbnailService,
+    @Optional() @Inject(forwardRef(() => CatalogerClientService)) private readonly catalogerClient?: CatalogerClientService,
   ) {}
 
   private cachedMediaList: any[] | null = null;
@@ -83,14 +85,26 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       const fileFaces = allFacesByFile[r.file_path] || [];
       const faceNames = fileFaces.map((f: any) => f.name || f.person_name).filter(Boolean);
 
+      let resolvedDate = r.media_date;
+      if (!resolvedDate) {
+        const fname = r.filename || path.basename(r.file_path || '');
+        const m1 = fname.match(/^(\d{4})[-_](\d{2})[-_](\d{2})/);
+        const m2 = fname.match(/^(?:IMG_|VID_|PXL_|PHOTO_)?(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/);
+        if (m1) {
+          resolvedDate = `${m1[1]}-${m1[2]}-${m1[3]}`;
+        } else if (m2) {
+          resolvedDate = `${m2[1]}-${m2[2]}-${m2[3]} ${m2[4]}:${m2[5]}:${m2[6]}`;
+        }
+      }
+
       return {
         file_path: r.file_path,
         filename: r.filename || path.basename(r.file_path),
         folder: r.folder,
         file_size: r.file_size,
         mtime: r.mtime,
-        capture_date: r.media_date,
-        media_date: r.media_date,
+        capture_date: resolvedDate,
+        media_date: resolvedDate,
         phash: r.phash,
         is_video: isVideo,
         is_image: isImage,
@@ -116,6 +130,11 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
         camera_make: r.camera_make,
         camera_model: r.camera_model,
         location_name: r.location_name,
+        latitude: r.latitude != null ? Number(r.latitude) : null,
+        longitude: r.longitude != null ? Number(r.longitude) : null,
+        gps: (r.latitude != null && r.longitude != null)
+          ? { latitude: Number(r.latitude), longitude: Number(r.longitude) }
+          : null,
         face_count: fileFaces.length || faceCounts[r.file_path] || 0,
         faces: fileFaces,
         face_names: faceNames,
@@ -1136,11 +1155,18 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
           if (ga.transcription || sdata.transcription) transcription = ga.transcription || sdata.transcription;
           if (ga.transcription_ru || sdata.transcription_ru) transcriptionRu = ga.transcription_ru || sdata.transcription_ru;
           if (ga.timeline_events || sdata.timeline_events) timelineEvents = ga.timeline_events || sdata.timeline_events;
-          if (sdata.capture_date) captureDate = sdata.capture_date;
-          else if (sdata.exif?.DateTimeOriginal) captureDate = sdata.exif.DateTimeOriginal;
-          else if (sdata.exif?.CreateDate) captureDate = sdata.exif.CreateDate;
-          else if (sdata.media_date) captureDate = sdata.media_date;
+          const rawSidecarDate = sdata.capture_date ||
+            sdata.exif?.DateTimeOriginal ||
+            sdata.exif?.CreateDate ||
+            sdata.exif?.datetime ||
+            sdata.exif?.DateTime ||
+            sdata.exif?.date_time ||
+            sdata.media_date;
 
+          if (rawSidecarDate) {
+            const str = String(rawSidecarDate).trim();
+            captureDate = str.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
+          }
           if (sdata.media_date) mediaDate = sdata.media_date;
           else if (captureDate && !mediaDate) mediaDate = captureDate;
 
@@ -1247,6 +1273,46 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
+      // Fallback date from filename if not in sidecar or metadata (e.g. 2016-07-02 12-25-42.JPG, 20240808_130100.heic, IMG_20240808_130100.jpg)
+      if (!captureDate && !mediaDate) {
+        const dm1 = baseName.match(/^(\d{4})[-_](\d{2})[-_](\d{2})/);
+        const dm2 = baseName.match(/^(?:IMG_|VID_|PXL_|PHOTO_)?(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/);
+        if (dm1) {
+          captureDate = `${dm1[1]}-${dm1[2]}-${dm1[3]}`;
+          mediaDate = captureDate;
+        } else if (dm2) {
+          captureDate = `${dm2[1]}-${dm2[2]}-${dm2[3]} ${dm2[4]}:${dm2[5]}:${dm2[6]}`;
+          mediaDate = captureDate;
+        }
+      }
+
+      // Extract GPS coordinates & location name from sidecar EXIF
+      let latitude: number | null = null;
+      let longitude: number | null = null;
+      let locationName: string | null = null;
+
+      if (sdata) {
+        if (sdata.exif?.gps?.latitude != null && sdata.exif?.gps?.longitude != null) {
+          latitude = Number(sdata.exif.gps.latitude);
+          longitude = Number(sdata.exif.gps.longitude);
+        } else if (sdata.exif?.latitude != null && sdata.exif?.longitude != null) {
+          latitude = Number(sdata.exif.latitude);
+          longitude = Number(sdata.exif.longitude);
+        } else if (sdata.gps?.latitude != null && sdata.gps?.longitude != null) {
+          latitude = Number(sdata.gps.latitude);
+          longitude = Number(sdata.gps.longitude);
+        }
+
+        if (sdata.exif?.location) {
+          const l = sdata.exif.location;
+          locationName = [l.city, l.region, l.country].filter(Boolean).join(', ') || l.city || l.country || null;
+        } else if (sdata.location_name) {
+          locationName = sdata.location_name;
+        } else if (sdata.location) {
+          locationName = typeof sdata.location === 'string' ? sdata.location : ([sdata.location.city, sdata.location.country].filter(Boolean).join(', ') || null);
+        }
+      }
+
       const fc = dedupFaces.length > 0 ? dedupFaces.length : (faceCounts[filePath] || baseFaceCounts[baseName.toLowerCase()] || 0);
 
       const normPath = filePath.toLowerCase().replace(/\\/g, '/');
@@ -1275,6 +1341,10 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
         mtime: mtime,
         capture_date: captureDate,
         media_date: mediaDate,
+        latitude: latitude,
+        longitude: longitude,
+        location_name: locationName,
+        gps: (latitude != null && longitude != null) ? { latitude, longitude } : null,
         phash: phash,
         is_video: isVideo,
         is_image: isImage,
@@ -1403,6 +1473,9 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       this.cacheTimestamp = Date.now();
       this.hasInitialScanRun = true;
       return this.cachedMediaList;
+    } catch (err) {
+      this.logger.error(`Error in buildMediaIndex: ${err}`, (err as any)?.stack);
+      throw err;
     } finally {
       this.scanStatus.is_scanning = false;
       this.scanStatus.current_file = null;
@@ -1429,9 +1502,6 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
 
     const isRefresh = query?.refresh === true || query?.refresh === 'true';
     const now = Date.now();
-    const targetOffset = Number(query?.offset) || 0;
-    const targetLimit = Number(query?.limit) || 100;
-    const targetCount = targetOffset + targetLimit;
 
     // 1. If in-memory cache is empty and not a forced refresh, first hydrate instantly from SQLite
     if (!this.cachedMediaList && !isRefresh) {
@@ -1456,17 +1526,9 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
         });
       }
 
-      // If cache is empty, initial scan has not completed, or explicit refresh requested, wait for initial chunk
-      if (!this.cachedMediaList || !this.hasInitialScanRun || isRefresh) {
-        let waitIter = 0;
-        while (
-          this.scanStatus.is_scanning &&
-          (!this.cachedMediaList || this.cachedMediaList.length < targetCount) &&
-          waitIter < 30
-        ) {
-          waitIter++;
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
+      // If cache is empty, initial scan has not completed, or explicit refresh requested, wait for scan to finish
+      if (this.inFlightScanPromise && (!this.cachedMediaList || !this.hasInitialScanRun || isRefresh)) {
+        await this.inFlightScanPromise;
       }
     }
 
@@ -1493,16 +1555,37 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
     if (query) {
       const search = query.search?.trim().toLowerCase();
       if (search) {
+        const hasCyrillic = /[а-яА-ЯёЁ]/.test(search);
+        const hasLatin = /[a-zA-Z]/.test(search);
+
         filtered = filtered.filter((item) => {
-          const matchDesc = Boolean(item.description && item.description.toLowerCase().includes(search));
-          const matchDescRu = Boolean(item.description_ru && item.description_ru.toLowerCase().includes(search));
-          const matchSummary = Boolean(item.summary && item.summary.toLowerCase().includes(search));
-          const matchSummaryRu = Boolean(item.summary_ru && item.summary_ru.toLowerCase().includes(search));
           const matchName = Boolean(item.filename && item.filename.toLowerCase().includes(search));
           const matchFolder = Boolean(item.folder && item.folder.toLowerCase().includes(search));
           const matchFaces = Boolean(item.face_names && item.face_names.some((fn: string) => fn.toLowerCase().includes(search)));
           const matchOcr = Boolean(item.ocr_text && item.ocr_text.toLowerCase().includes(search));
-          return matchDesc || matchDescRu || matchSummary || matchSummaryRu || matchName || matchFolder || matchFaces || matchOcr;
+
+          if (hasCyrillic && !hasLatin) {
+            // Russian search query: search within Russian fields
+            const matchDescRu = Boolean(item.description_ru && item.description_ru.toLowerCase().includes(search));
+            const matchSummaryRu = Boolean(item.summary_ru && item.summary_ru.toLowerCase().includes(search));
+            const matchExifRu = Boolean(item.exif_analysis_ru && item.exif_analysis_ru.toLowerCase().includes(search));
+            const matchTransRu = Boolean(item.transcription_ru && item.transcription_ru.toLowerCase().includes(search));
+            return matchDescRu || matchSummaryRu || matchExifRu || matchTransRu || matchName || matchFolder || matchFaces || matchOcr;
+          } else if (hasLatin && !hasCyrillic) {
+            // English search query: search within English fields
+            const matchDesc = Boolean(item.description && item.description.toLowerCase().includes(search));
+            const matchSummary = Boolean(item.summary && item.summary.toLowerCase().includes(search));
+            const matchExif = Boolean(item.exif_analysis && item.exif_analysis.toLowerCase().includes(search));
+            const matchTrans = Boolean(item.transcription && item.transcription.toLowerCase().includes(search));
+            return matchDesc || matchSummary || matchExif || matchTrans || matchName || matchFolder || matchFaces || matchOcr;
+          } else {
+            // Mixed or other language: match across all fields
+            const matchDesc = Boolean(item.description && item.description.toLowerCase().includes(search));
+            const matchDescRu = Boolean(item.description_ru && item.description_ru.toLowerCase().includes(search));
+            const matchSummary = Boolean(item.summary && item.summary.toLowerCase().includes(search));
+            const matchSummaryRu = Boolean(item.summary_ru && item.summary_ru.toLowerCase().includes(search));
+            return matchDesc || matchDescRu || matchSummary || matchSummaryRu || matchName || matchFolder || matchFaces || matchOcr;
+          }
         });
       }
 
@@ -1646,7 +1729,7 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       if (this.filePathMap.has(subpath.toLowerCase())) return this.filePathMap.get(subpath.toLowerCase())!;
     }
 
-    // 4. Test candidate paths in input and output folders
+    // 4. Test candidate paths in input and output folders (including secure vault storage)
     const candidateFolders = [
       ...this.config.inputFolders,
       this.config.outputFolder,
@@ -1654,6 +1737,8 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       '/app/media_output',
       path.resolve(this.config.projectRoot, 'media_input'),
       path.resolve(this.config.projectRoot, 'media_output'),
+      // Vault physical file storage — needed for thumbnail/file serving of vault items
+      path.resolve(this.config.projectRoot, 'storage', '.vault', 'files'),
     ];
 
     for (const folder of candidateFolders) {
@@ -1787,6 +1872,12 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    let captureDate: string | null = dbMeta?.capture_date || dbMeta?.media_date || null;
+    let mediaDate: string | null = dbMeta?.media_date || dbMeta?.capture_date || null;
+    let latitude: number | null = dbMeta?.latitude != null ? Number(dbMeta.latitude) : null;
+    let longitude: number | null = dbMeta?.longitude != null ? Number(dbMeta.longitude) : null;
+    let locationName: string | null = dbMeta?.location_name || null;
+
     // Invalidate sidecar cache for this file to ensure freshest read
     const resolvedSidecar = this.findSidecarFile(resolved, undefined, sidecar);
     if (resolvedSidecar) {
@@ -1813,9 +1904,51 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
         if (ga.transcription_ru || sdata.transcription_ru) transcriptionRu = ga.transcription_ru || sdata.transcription_ru;
         if (ga.timeline_events || sdata.timeline_events) timelineEvents = ga.timeline_events || sdata.timeline_events;
 
+        const rawDate = sdata.capture_date ||
+          sdata.exif?.DateTimeOriginal ||
+          sdata.exif?.CreateDate ||
+          sdata.exif?.datetime ||
+          sdata.exif?.DateTime ||
+          sdata.media_date;
+        if (rawDate) {
+          const str = String(rawDate).trim();
+          captureDate = str.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
+          mediaDate = captureDate;
+        }
+
+        if (sdata.exif?.gps?.latitude != null && sdata.exif?.gps?.longitude != null) {
+          latitude = Number(sdata.exif.gps.latitude);
+          longitude = Number(sdata.exif.gps.longitude);
+        } else if (sdata.exif?.latitude != null && sdata.exif?.longitude != null) {
+          latitude = Number(sdata.exif.latitude);
+          longitude = Number(sdata.exif.longitude);
+        } else if (sdata.gps?.latitude != null && sdata.gps?.longitude != null) {
+          latitude = Number(sdata.gps.latitude);
+          longitude = Number(sdata.gps.longitude);
+        }
+
+        if (sdata.exif?.location) {
+          const l = sdata.exif.location;
+          locationName = [l.city, l.region, l.country].filter(Boolean).join(', ') || l.city || l.country || null;
+        } else if (sdata.location_name) {
+          locationName = sdata.location_name;
+        }
+
         if (desc || descRu || summ || summRu || status === 'UNPROCESSED') {
           status = 'PROCESSED';
         }
+      }
+    }
+
+    if (!captureDate && !mediaDate) {
+      const dm1 = baseName.match(/^(\d{4})[-_](\d{2})[-_](\d{2})/);
+      const dm2 = baseName.match(/^(?:IMG_|VID_|PXL_|PHOTO_)?(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/);
+      if (dm1) {
+        captureDate = `${dm1[1]}-${dm1[2]}-${dm1[3]}`;
+        mediaDate = captureDate;
+      } else if (dm2) {
+        captureDate = `${dm2[1]}-${dm2[2]}-${dm2[3]} ${dm2[4]}:${dm2[5]}:${dm2[6]}`;
+        mediaDate = captureDate;
       }
     }
 
@@ -1852,6 +1985,12 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       folder: folder || path.dirname(resolved),
       file_size: size,
       mtime: mtime,
+      capture_date: captureDate,
+      media_date: mediaDate,
+      latitude: latitude,
+      longitude: longitude,
+      location_name: locationName,
+      gps: (latitude != null && longitude != null) ? { latitude, longitude } : null,
       is_video: isVideo,
       is_image: isImage,
       status: status,
@@ -2387,6 +2526,43 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       data: updatedDbRecord,
     };
   }
+
+  async uploadAndProcessMediaFile(buffer: Buffer, originalname: string): Promise<any> {
+    const safeName = path.basename(originalname);
+    let targetFolder = Array.isArray(this.config.inputFolders) && this.config.inputFolders.length > 0 ? this.config.inputFolders[0] : null;
+    if (!targetFolder || !fs.existsSync(targetFolder)) {
+      targetFolder = path.join(this.config.projectRoot || process.cwd(), 'media_input');
+    }
+    if (!fs.existsSync(targetFolder)) {
+      fs.mkdirSync(targetFolder, { recursive: true });
+    }
+    const destPath = path.join(targetFolder, safeName);
+    fs.writeFileSync(destPath, buffer);
+
+    this.registerIndexedFile(destPath, targetFolder);
+    this.invalidateCache();
+
+    let analysisTriggered = false;
+    if (this.catalogerClient) {
+      try {
+        this.catalogerClient.triggerAnalyzeFile(destPath).catch(err => {
+          this.logger.warn(`Auto-analysis background task for '${safeName}' failed: ${err.message}`);
+        });
+        analysisTriggered = true;
+      } catch (err: any) {
+        this.logger.warn(`Failed to dispatch auto-analysis for '${safeName}': ${err.message}`);
+      }
+    }
+
+    return {
+      status: 'success',
+      message: `File '${safeName}' uploaded successfully and queued for indexing`,
+      file_path: destPath,
+      filename: safeName,
+      analysis_triggered: analysisTriggered,
+    };
+  }
 }
+
 
 

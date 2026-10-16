@@ -682,4 +682,155 @@ export class SettingsService {
       message: `Model ${cleanId} configured. Just-in-time loading will activate on first inference request.`,
     };
   }
+
+  getStorageTelemetry(user?: any) {
+    const dbPath = this.config.dbPath;
+    const dbDir = path.dirname(dbPath);
+    let diskTotal = 0;
+    let diskFree = 0;
+    let diskAvailable = 0;
+
+    try {
+      const targetDir = fs.existsSync(dbDir) ? dbDir : (process.platform === 'win32' ? 'C:/' : '/');
+      const stats = (fs as any).statfsSync(targetDir);
+      diskTotal = Number(stats.blocks) * Number(stats.bsize);
+      diskFree = Number(stats.bfree) * Number(stats.bsize);
+      diskAvailable = Number(stats.bavail) * Number(stats.bsize);
+    } catch (e: any) {
+      this.logger.warn(`Could not query statfs: ${e.message}`);
+    }
+
+    // Query media sizes from SQLite DB: prefer active catalog database or user database if it has items
+    let db = this.db.getDb();
+    if (user?.sub && user.sub !== 'admin' && user.sub !== 'user_admin_default') {
+      try {
+        const udb = this.db.getDb(user.sub);
+        const row = udb.prepare('SELECT count(*) as cnt FROM media_items').get() as any;
+        if (row && row.cnt > 0) {
+          db = udb;
+        }
+      } catch {}
+    }
+
+    let photoCount = 0;
+    let photoBytes = 0;
+    let videoCount = 0;
+    let videoBytes = 0;
+    let otherCount = 0;
+    let otherBytes = 0;
+
+    try {
+      const rows = db.prepare(`
+        SELECT 
+          CASE 
+            WHEN LOWER(media_type) IN ('photo', 'image') THEN 'photo'
+            WHEN LOWER(media_type) = 'video' THEN 'video'
+            ELSE 'other'
+          END as mgroup,
+          COUNT(*) as cnt,
+          COALESCE(SUM(file_size), 0) as total_size
+        FROM media_items
+        GROUP BY mgroup
+      `).all() as any[];
+
+      for (const r of rows) {
+        if (r.mgroup === 'photo') {
+          photoCount = r.cnt;
+          photoBytes = r.total_size;
+        } else if (r.mgroup === 'video') {
+          videoCount = r.cnt;
+          videoBytes = r.total_size;
+        } else {
+          otherCount = r.cnt;
+          otherBytes = r.total_size;
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed to query media sizes: ${err.message}`);
+    }
+
+    // Calculate database size across all database files (.db, -wal, -shm) in catalog and output folders
+    let dbBytes = 0;
+    try {
+      const dbDirsToCheck = new Set<string>();
+      if (fs.existsSync(dbDir)) dbDirsToCheck.add(dbDir);
+      const rootDbDir = path.resolve(this.config.outputFolder);
+      if (fs.existsSync(rootDbDir)) dbDirsToCheck.add(rootDbDir);
+
+      for (const d of dbDirsToCheck) {
+        if (!fs.existsSync(d)) continue;
+        for (const file of fs.readdirSync(d)) {
+          if (file.endsWith('.db') || file.endsWith('.db-wal') || file.endsWith('.db-shm')) {
+            try {
+              dbBytes += fs.statSync(path.join(d, file)).size;
+            } catch {}
+          }
+        }
+      }
+    } catch {}
+
+    // Calculate cache, thumbnails, and sidecar metadata size recursively
+    let cacheBytes = 0;
+    const calculateDirSize = (dirPath: string): number => {
+      let size = 0;
+      if (!fs.existsSync(dirPath)) return size;
+      try {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dirPath, entry.name);
+          try {
+            if (entry.isDirectory()) {
+              size += calculateDirSize(fullPath);
+            } else if (entry.isFile()) {
+              size += fs.statSync(fullPath).size;
+            }
+          } catch {}
+        }
+      } catch {}
+      return size;
+    };
+
+    const cacheDirs = [
+      path.resolve(this.config.outputFolder, 'cache'),
+      path.resolve(this.config.projectRoot || process.cwd(), 'data', 'cache'),
+      path.resolve(this.config.projectRoot || process.cwd(), 'media_output', 'cache'),
+    ];
+    const scannedDirs = new Set<string>();
+    for (const cd of cacheDirs) {
+      if (fs.existsSync(cd) && !scannedDirs.has(cd)) {
+        scannedDirs.add(cd);
+        cacheBytes += calculateDirSize(cd);
+      }
+    }
+
+    const totalUsedBytes = photoBytes + videoBytes + otherBytes + dbBytes + cacheBytes;
+    const configuredQuotaBytes = this.config.getSavedSettings()?.STORAGE_QUOTA_BYTES
+      ? Number(this.config.getSavedSettings().STORAGE_QUOTA_BYTES)
+      : null;
+
+    return {
+      disk: {
+        total: diskTotal,
+        free: diskFree,
+        available: diskAvailable,
+        used: diskTotal - diskAvailable,
+      },
+      quota: {
+        configuredBytes: configuredQuotaBytes,
+        effectiveTotalBytes: configuredQuotaBytes || diskTotal,
+        percentUsed: (configuredQuotaBytes || diskTotal) > 0
+          ? Math.min(100, Number(((totalUsedBytes / (configuredQuotaBytes || diskTotal)) * 100).toFixed(1)))
+          : 0,
+      },
+      breakdown: {
+        photos: { count: photoCount, bytes: photoBytes },
+        videos: { count: videoCount, bytes: videoBytes },
+        other: { count: otherCount, bytes: otherBytes },
+        database: { bytes: dbBytes },
+        cacheAndThumbnails: { bytes: cacheBytes },
+        totalMediaBytes: photoBytes + videoBytes + otherBytes,
+        totalUsedBytes,
+      },
+    };
+  }
 }

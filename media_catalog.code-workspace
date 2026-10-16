@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../media_cataloger_web"
+		},
+		{
+			"path": "../ai_engine"
+		},
+		{
+			"path": "../SystemDevelopmentManagement"
+		}
+	],
+	"settings": {}
+}

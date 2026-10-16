@@ -72,6 +72,13 @@ describe('VaultService & Secret Folder Isolation', () => {
     assert.equal(vaultService.isVaultUnlocked('invalid_token'), false);
   });
 
+  it('should unlock with default master PIN 123456', () => {
+    const unlockRes = vaultService.unlockVault({ pin: '123456' });
+    assert.equal(unlockRes.unlocked, true);
+    assert.ok(unlockRes.sessionToken);
+    assert.equal(vaultService.isVaultUnlocked(unlockRes.sessionToken), true);
+  });
+
   it('should add files to secret vault and detect vault file membership', () => {
     const privatePath = path.join(tmpDir, 'private_docs.jpg');
     vaultService.addVaultItem(privatePath, 'Personal Documents');
@@ -102,5 +109,60 @@ describe('VaultService & Secret Folder Isolation', () => {
 
     vaultService.lockVault(unlockRes.sessionToken);
     assert.equal(vaultService.isVaultUnlocked(unlockRes.sessionToken), false);
+  });
+
+  it('should request PIN recovery by email and reset PIN with code', () => {
+    // Setup recovery email
+    vaultService.updateConfig({ currentPin: '9876', recoveryEmail: 'user@example.com' });
+
+    // Request recovery
+    const recoveryReq = vaultService.requestPinRecovery('user@example.com');
+    assert.equal(recoveryReq.success, true);
+    assert.ok(recoveryReq.code);
+
+    // Reset with wrong code should fail
+    assert.throws(() => {
+      vaultService.resetPinWithRecovery('user@example.com', '999999', '1122');
+    }, /(Неверный или просроченный код восстановления|Invalid or expired recovery code)/);
+
+    // Reset with correct code
+    const resetRes = vaultService.resetPinWithRecovery('user@example.com', recoveryReq.code!, '1122');
+    assert.equal(resetRes.success, true);
+
+    // Now unlock with new PIN
+    const unlockRes = vaultService.unlockVault({ pin: '1122' });
+    assert.equal(unlockRes.unlocked, true);
+  });
+
+  it('should store and hydrate private items in isolated vault database', () => {
+    const itemPath = path.join(tmpDir, 'isolated_item.jpg');
+    const db = dbService.getDb();
+    db.prepare(`
+      INSERT INTO media_items (id, file_path, file_name, folder, media_type, file_size, mtime, status, media_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('test-media-1', itemPath, 'isolated_item.jpg', tmpDir, 'photo', 1024, Date.now(), 'PROCESSED', '2026-05-15');
+
+    db.prepare(`
+      INSERT INTO media_metadata (media_id, summary, summary_ru)
+      VALUES (?, ?, ?)
+    `).run('test-media-1', 'Secret private summary', 'Секретное описание');
+
+    // Move to vault
+    dbService.addVaultItem(itemPath, 'Personal file');
+
+    // Item should be flagged is_vault in main DB
+    const regularItem = db.prepare('SELECT * FROM media_items WHERE file_path = ?').get(itemPath) as any;
+    assert.equal(regularItem?.is_vault, 1);
+
+    // Vault database should list the item
+    const unlockRes = vaultService.unlockVault({ pin: '1122' });
+    const vaultItems = vaultService.listVaultMediaFiles(unlockRes.sessionToken);
+    const normExpected = itemPath.replace(/\\/g, '/');
+    assert.ok(vaultItems.some((v) => (v.file_path || '').replace(/\\/g, '/') === normExpected));
+
+    // Remove from vault
+    dbService.removeVaultItem(itemPath);
+    const unvaultedItem = db.prepare('SELECT * FROM media_items WHERE file_path = ?').get(itemPath) as any;
+    assert.equal(unvaultedItem?.is_vault, 0);
   });
 });

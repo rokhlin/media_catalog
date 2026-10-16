@@ -45,9 +45,34 @@ export class CreateUserDto {
   @IsString()
   @IsOptional()
   root_folder_path?: string;
+
+  @ApiPropertyOptional({ description: 'Email address', example: 'user@example.com' })
+  @IsString()
+  @IsOptional()
+  email?: string;
+
+  @ApiPropertyOptional({ description: 'Avatar URL' })
+  @IsString()
+  @IsOptional()
+  avatarUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Avatar type', enum: ['image', 'video'] })
+  @IsString()
+  @IsOptional()
+  avatarType?: 'image' | 'video';
+
+  @ApiPropertyOptional({ description: 'Avatar video URL' })
+  @IsString()
+  @IsOptional()
+  avatarVideoUrl?: string;
 }
 
 export class UpdateUserDto {
+  @ApiPropertyOptional({ description: 'Username' })
+  @IsString()
+  @IsOptional()
+  username?: string;
+
   @ApiPropertyOptional({ description: 'Display name' })
   @IsString()
   @IsOptional()
@@ -74,6 +99,53 @@ export class UpdateUserDto {
   @IsString()
   @IsOptional()
   root_folder_path?: string;
+
+  @ApiPropertyOptional({ description: 'Email address' })
+  @IsString()
+  @IsOptional()
+  email?: string;
+
+  @ApiPropertyOptional({ description: 'Avatar URL' })
+  @IsString()
+  @IsOptional()
+  avatarUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Avatar type', enum: ['image', 'video'] })
+  @IsString()
+  @IsOptional()
+  avatarType?: 'image' | 'video';
+
+  @ApiPropertyOptional({ description: 'Avatar video URL' })
+  @IsString()
+  @IsOptional()
+  avatarVideoUrl?: string;
+}
+
+export class UpdateProfileDto {
+  @ApiPropertyOptional({ description: 'Display name' })
+  @IsString()
+  @IsOptional()
+  displayName?: string;
+
+  @ApiPropertyOptional({ description: 'Email address' })
+  @IsString()
+  @IsOptional()
+  email?: string;
+
+  @ApiPropertyOptional({ description: 'Avatar URL' })
+  @IsString()
+  @IsOptional()
+  avatarUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Avatar type', enum: ['image', 'video'] })
+  @IsString()
+  @IsOptional()
+  avatarType?: 'image' | 'video';
+
+  @ApiPropertyOptional({ description: 'Avatar video URL' })
+  @IsString()
+  @IsOptional()
+  avatarVideoUrl?: string;
 }
 
 export class ChangePasswordDto {
@@ -87,4 +159,29 @@ export class ChangePasswordDto {
   @IsNotEmpty()
   @MinLength(4)
   newPassword!: string;
+}
+
+export class ForgotPasswordDto {
+  @ApiProperty({ description: 'Username to check password recovery for', example: 'admin' })
+  @IsString()
+  @IsNotEmpty()
+  username!: string;
+}
+
+export class ResetPasswordDto {
+  @ApiProperty({ description: 'Username to reset password for', example: 'admin' })
+  @IsString()
+  @IsNotEmpty()
+  username!: string;
+
+  @ApiProperty({ description: 'New password', example: 'Test2026' })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(4)
+  newPassword!: string;
+
+  @ApiPropertyOptional({ description: 'Master recovery key or confirmation code', example: 'Test2026' })
+  @IsString()
+  @IsOptional()
+  recoveryKey?: string;
 }

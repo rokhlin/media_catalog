@@ -1,5 +1,6 @@
-import { Controller, Get, Post, Patch, Body, Query, Req, Res, Headers, BadRequestException, ForbiddenException, Inject, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiQuery, ApiResponse } from '@nestjs/swagger';
+import { Controller, Get, Post, Patch, Body, Query, Req, Res, Headers, BadRequestException, ForbiddenException, Inject, UseGuards, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiQuery, ApiResponse, ApiConsumes } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -125,9 +126,12 @@ export class MediaController {
     @Inject(VaultService) private readonly vaultService: VaultService,
   ) {}
 
-  private checkVaultAccess(filePath: string, vaultToken?: string): void {
+  private checkVaultAccess(filePath: string, vaultToken?: string, req?: Request): void {
     if (this.vaultService.isVaultFile(filePath)) {
-      if (!this.vaultService.isVaultUnlocked(vaultToken)) {
+      // Accept vault token from: header/query param (primary) OR cookie (fallback for img tags)
+      const cookieToken = (req as any)?.cookies?.['media_cataloger_vault_session'];
+      const effectiveToken = vaultToken || cookieToken;
+      if (!this.vaultService.isVaultUnlocked(effectiveToken)) {
         throw new ForbiddenException('Secret Vault item is locked. Authentication PIN required.');
       }
     }
@@ -136,7 +140,25 @@ export class MediaController {
   @Get('files')
   @ApiOperation({ summary: 'List all media files discovered in input sources with pagination, search, filter and sorting' })
   @ApiResponse({ status: 200, description: 'Media file list with face detections, pagination and AI summaries' })
-  async listMediaFiles(@Query() query: ListMediaFilesQueryDto) {
+  async listMediaFiles(
+    @Query() query: ListMediaFilesQueryDto,
+    @Headers('x-vault-token') vaultToken?: string,
+  ) {
+    if (query?.vault === 'true') {
+      if (!this.vaultService.isVaultUnlocked(vaultToken)) {
+        throw new ForbiddenException('Личная папка заблокирована. Требуется ввод PIN-кода.');
+      }
+      const items = this.vaultService.listVaultMediaItems(vaultToken);
+      return {
+        items,
+        total: items.length,
+        processed: items.length,
+        photos: items.filter((i: any) => i.is_image).length,
+        videos: items.filter((i: any) => i.is_video).length,
+        offset: 0,
+        limit: items.length,
+      };
+    }
     return this.mediaService.listMediaFiles(query);
   }
 
@@ -219,7 +241,7 @@ export class MediaController {
       throw new BadRequestException('Missing file or path parameter');
     }
     const resolved = this.mediaService.resolveMediaFilePath(target);
-    this.checkVaultAccess(resolved, headerVaultToken || queryVaultToken);
+    this.checkVaultAccess(resolved, headerVaultToken || queryVaultToken, req);
     
     const size = querySize ? parseInt(querySize, 10) : 300;
 
@@ -253,7 +275,7 @@ export class MediaController {
       throw new BadRequestException('Missing file or path parameter');
     }
     const resolved = this.mediaService.resolveMediaFilePath(target);
-    this.checkVaultAccess(resolved, headerVaultToken || queryVaultToken);
+    this.checkVaultAccess(resolved, headerVaultToken || queryVaultToken, req);
 
     const ext = path.extname(resolved).toLowerCase();
     const isHeic = ext === '.heic' || ext === '.heif';
@@ -309,11 +331,16 @@ export class MediaController {
   async getMediaFileInfo(
     @Query('path') queryPath: string,
     @Query('file') queryFile: string,
+    @Query('vault_token') queryVaultToken: string,
+    @Headers('x-vault-token') headerVaultToken: string,
+    @Req() req: Request,
   ) {
     const target = queryPath || queryFile;
     if (!target || !target.trim()) {
       throw new BadRequestException('Missing file or path parameter');
     }
+    const resolved = this.mediaService.resolveMediaFilePath(target);
+    this.checkVaultAccess(resolved, headerVaultToken || queryVaultToken, req);
     return this.mediaService.getMediaFileInfo(target);
   }
 
@@ -364,5 +391,17 @@ export class MediaController {
   async updateMetadataPatch(@Body() body: UpdateMediaMetadataDto) {
     return this.mediaService.updateMediaMetadata(body);
   }
+
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiOperation({ summary: 'Upload a media file (photo/video) directly to configured input library and trigger indexing' })
+  @ApiConsumes('multipart/form-data')
+  async uploadMediaFile(@UploadedFile() file: any) {
+    if (!file || !file.buffer) {
+      throw new BadRequestException('No media file uploaded or file buffer is empty');
+    }
+    return this.mediaService.uploadAndProcessMediaFile(file.buffer, file.originalname);
+  }
 }
+
 

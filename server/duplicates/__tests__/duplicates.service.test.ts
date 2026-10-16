@@ -387,7 +387,7 @@ describe('DuplicatesService', () => {
       mockDbService.getAllMediaHashes = () => testHashes;
 
       const groups = await duplicatesService.getDuplicateGroups('all', 0.90, 3.0, 'newest');
-      const summary = duplicatesService.getSummary();
+      const summary = await duplicatesService.getSummary();
 
       assert.equal(groups.length, 1);
       assert.equal(typeof summary.totalGroups, 'number');

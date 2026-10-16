@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject, BadRequestException, Optional } from '@nestjs/common';
+import { Injectable, Logger, Inject, BadRequestException, Optional, forwardRef } from '@nestjs/common';
 import axios from 'axios';
 import * as http from 'http';
 import * as https from 'https';
@@ -19,7 +19,7 @@ export class CatalogerClientService {
 
   constructor(
     @Inject(AppConfigService) private readonly config: AppConfigService,
-    @Inject(MediaService) private readonly mediaService: MediaService,
+    @Inject(forwardRef(() => MediaService)) private readonly mediaService: MediaService,
     @Inject(DatabaseService) private readonly db: DatabaseService,
     @Inject(LogBufferService) @Optional() private readonly logBuffer?: LogBufferService,
     @Inject(GeminiService) @Optional() private readonly geminiService?: GeminiService,
@@ -33,7 +33,7 @@ export class CatalogerClientService {
     return url;
   }
 
-  async triggerRun(force: boolean = false, customPayload?: any, userId?: string, rootPath?: string): Promise<any> {
+  async triggerRun(force: boolean = false, customPayload?: any, userId?: string, rootPath?: string, userRole?: string): Promise<any> {
     const execConfig = this.config.getPipelineExecutionConfig();
     this.logBuffer?.info('Pipeline', `Initiating media catalog synchronization (force=${Boolean(force)})`);
 
@@ -75,6 +75,7 @@ export class CatalogerClientService {
     const runHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
     if (userId) runHeaders['X-User-ID'] = userId;
     if (rootPath) runHeaders['X-User-Root-Path'] = rootPath;
+    if (userRole) runHeaders['X-User-Role'] = userRole;
 
     try {
       this.logger.log(`Triggering BE run: ${files.length} file(s) across input sources -> ${execConfig.output_folder}`);
@@ -137,7 +138,7 @@ export class CatalogerClientService {
     }
   }
 
-  async triggerAnalyzeFile(file: string, customPayload?: any, userId?: string, rootPath?: string): Promise<any> {
+  async triggerAnalyzeFile(file: string, customPayload?: any, userId?: string, rootPath?: string, userRole?: string): Promise<any> {
     if (!file || !file.trim()) {
       this.logBuffer?.warn('Pipeline', 'Single file analysis requested with empty file path');
       throw new BadRequestException('File parameter cannot be empty');
@@ -231,6 +232,7 @@ export class CatalogerClientService {
 
     if (userId) requestHeaders['X-User-ID'] = userId;
     if (rootPath) requestHeaders['X-User-Root-Path'] = rootPath;
+    if (userRole) requestHeaders['X-User-Role'] = userRole;
 
     try {
       this.logger.log(`Triggering single file analysis on BE: ${resolvedPath}`);

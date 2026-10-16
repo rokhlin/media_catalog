@@ -14,7 +14,7 @@ export class CatalogerController {
   constructor(@Inject(CatalogerClientService) private readonly catalogerService: CatalogerClientService) {}
 
   @Post('run')
-  @RequirePermissions('admin_panel')
+  @RequirePermissions('admin_panel', 'edit_metadata')
   @ApiOperation({ summary: 'Trigger full cataloging sync' })
   @ApiQuery({ name: 'force', required: false, type: Boolean, description: 'Force re-processing of already synced items' })
   @ApiQuery({ name: 'mode', required: false, type: String, description: 'Single pipeline mode' })
@@ -30,6 +30,9 @@ export class CatalogerController {
       const forceBool = force === 'true' || force === '1';
       const userId = req?.user?.sub;
       const rootPath = req?.user?.root_folder_path;
+      const userRole = req?.user?.role === 'admin' || (Array.isArray(req?.user?.permissions) && req?.user?.permissions.includes('admin_panel'))
+        ? 'admin'
+        : (req?.user?.role || 'user');
       let resolvedModes: string[] | undefined = undefined;
       if (customPayload?.modes && Array.isArray(customPayload.modes)) {
         resolvedModes = customPayload.modes;
@@ -46,7 +49,7 @@ export class CatalogerController {
         ...(resolvedModes ? { modes: resolvedModes } : {}),
       };
 
-      return await this.catalogerService.triggerRun(forceBool, mergedPayload, userId, rootPath);
+      return await this.catalogerService.triggerRun(forceBool, mergedPayload, userId, rootPath, userRole);
     } catch (err: any) {
       if (err instanceof HttpException) {
         throw err;
@@ -67,7 +70,10 @@ export class CatalogerController {
     try {
       const userId = req?.user?.sub;
       const rootPath = req?.user?.root_folder_path;
-      return await this.catalogerService.triggerAnalyzeFile(String(targetFile).trim(), body, userId, rootPath);
+      const userRole = req?.user?.role === 'admin' || (Array.isArray(req?.user?.permissions) && req?.user?.permissions.includes('admin_panel'))
+        ? 'admin'
+        : (req?.user?.role || 'user');
+      return await this.catalogerService.triggerAnalyzeFile(String(targetFile).trim(), body, userId, rootPath, userRole);
     } catch (err: any) {
       if (err instanceof HttpException) {
         throw err;
