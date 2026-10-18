@@ -38,6 +38,7 @@ describe('DuplicatesService', () => {
       {
         verifyFileAccess: (p: string) => ({ accessible: true, resolvedPath: p }),
         invalidateCache: () => {},
+        findSidecarFile: (p: string) => null,
       } as any,
     );
   });
@@ -417,6 +418,18 @@ describe('DuplicatesService', () => {
 
       assert.ok(groups.length > 0, 'Should find groups among 500 items');
       assert.ok(elapsed < 500, `Clustering 500 items should take < 500ms, took ${elapsed}ms`);
+    });
+
+    it('should unmark a file as duplicate, clearing duplicate metadata and updating cache', async () => {
+      let hashesDeleted: string[] = [];
+      mockDbService.deleteMediaHashes = (paths: string[]) => {
+        hashesDeleted = paths;
+      };
+
+      const result = await duplicatesService.unmarkDuplicate('/photos/pic1_copy.jpg');
+      assert.equal(result.success, true);
+      assert.equal(result.filePath, '/photos/pic1_copy.jpg');
+      assert.deepEqual(hashesDeleted, ['/photos/pic1_copy.jpg']);
     });
   });
 });

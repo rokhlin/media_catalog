@@ -95,4 +95,11 @@ export class DuplicatesController {
     const dest = body.destination_folder || body.destinationFolder || '';
     return this.duplicatesService.moveFiles(files, dest);
   }
+
+  @Post('unmark')
+  @ApiOperation({ summary: 'Unmark a file as duplicate ("Это не дубликат")' })
+  unmarkDuplicate(@Body() body: { file_path?: string; filePath?: string }) {
+    const filePath = body.file_path || body.filePath || '';
+    return this.duplicatesService.unmarkDuplicate(filePath);
+  }
 }

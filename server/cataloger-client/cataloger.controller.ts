@@ -115,6 +115,17 @@ export class CatalogerController {
     }
   }
 
+  @Post('cleanup')
+  @RequirePermissions('admin_panel')
+  @ApiOperation({ summary: 'Unload AI models and release Docker/system memory' })
+  async cleanup() {
+    try {
+      return await this.catalogerService.cleanup();
+    } catch (err: any) {
+      throw new HttpException(err.message, HttpStatus.BAD_GATEWAY);
+    }
+  }
+
   @Public()
   @Get('status')
   @ApiOperation({ summary: 'Get current cataloging pipeline execution status and progress' })

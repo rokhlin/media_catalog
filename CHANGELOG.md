@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.3.0] - 2026-10-18
+
+### Added
+- **"Not a duplicate" ("Это не дубликат") Disassociation Action (FEAT-029)**:
+  - Added `POST /api/duplicates/unmark` and `unmarkDuplicate` method in `DuplicatesService` to detach items from duplicate groups, clear replicated sidecar metadata, delete duplicate hash cluster references, and re-index.
+- **Multi-Folder Targeted Pipeline Execution & Incremental Analysis (FEAT-029)**:
+  - Supported folder-scoped synchronization in `triggerRun` via `folders` / `folder_paths` filter array.
+  - Added incremental analysis filter (`only_unprocessed` / `incremental`) to process only files without existing sidecar metadata.
+- **AI Engine Memory Reclamation Proxy (BUG-015 / FEAT-029)**:
+  - Added `POST /api/cleanup` route in `CatalogerController` proxying to `ai_engine` to release InsightFace, Whisper, and CUDA memory.
+
 ## [2.0.0] - 2026-10-16
 
 ### Added

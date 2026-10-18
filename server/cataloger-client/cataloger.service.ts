@@ -37,9 +37,30 @@ export class CatalogerClientService {
     const execConfig = this.config.getPipelineExecutionConfig();
     this.logBuffer?.info('Pipeline', `Initiating media catalog synchronization (force=${Boolean(force)})`);
 
-    const scanned = await this.mediaService.scanInputFolders();
+    let scanned = await this.mediaService.scanInputFolders();
+
+    // 1. Multi-folder targeted filtering if specified by user
+    const targetedFolders: string[] | undefined = customPayload?.folders || customPayload?.folder_paths;
+    if (targetedFolders && Array.isArray(targetedFolders) && targetedFolders.length > 0) {
+      const normalizedTargetFolders = targetedFolders.map(f => f.replace(/\\/g, '/').toLowerCase());
+      scanned = scanned.filter(s => {
+        const fileFolder = (s.folder || '').replace(/\\/g, '/').toLowerCase();
+        const filePath = (s.filePath || '').replace(/\\/g, '/').toLowerCase();
+        return normalizedTargetFolders.some(tf => fileFolder === tf || filePath.startsWith(tf.endsWith('/') ? tf : tf + '/'));
+      });
+    }
+
+    // 2. Incremental analysis filter ("Анализ файлов без метаданных")
+    if (customPayload?.only_unprocessed || customPayload?.incremental) {
+      scanned = scanned.filter(s => {
+        const sidecar = this.mediaService.findSidecarFile(s.filePath);
+        return !sidecar || !fs.existsSync(sidecar);
+      });
+    }
+
     this.logBuffer?.debug('Pipeline', `Found ${scanned.length} media file(s) across input sources`, {
       inputFolders: execConfig.input_folders,
+      targetedFolders,
       totalFiles: scanned.length,
     });
 
@@ -598,6 +619,19 @@ export class CatalogerClientService {
     } catch (err: any) {
       const msg = err.response?.data?.detail || err.message;
       this.logBuffer?.error('Pipeline', `Failed to stop pipeline: ${msg}`, { cause: msg, stack: err.stack });
+      throw new Error(`Cataloger service error: ${msg}`);
+    }
+  }
+
+  async cleanup(): Promise<any> {
+    this.logBuffer?.info('Pipeline', 'Requesting AI engine model unloading and memory release');
+    try {
+      const res = await axios.post(`${this.baseUrl}/api/cleanup`, {}, { timeout: 10000 });
+      this.logBuffer?.info('Pipeline', 'AI engine resources released successfully');
+      return res.data;
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || err.message;
+      this.logBuffer?.error('Pipeline', `Failed to release AI engine resources: ${msg}`, { cause: msg, stack: err.stack });
       throw new Error(`Cataloger service error: ${msg}`);
     }
   }

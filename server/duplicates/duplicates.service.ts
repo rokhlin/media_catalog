@@ -1174,4 +1174,57 @@ export class DuplicatesService {
 
     this.cachedGroups = updated;
   }
+
+  /**
+   * Unmark a file as duplicate ("Это не дубликат").
+   * Detaches the file from duplicate/burst groups, clears replicated metadata,
+   * updates sidecar to prevent re-clustering, and invalidates media caches.
+   */
+  async unmarkDuplicate(filePath: string): Promise<{ success: boolean; message: string; filePath: string }> {
+    if (!filePath || !filePath.trim()) {
+      throw new BadRequestException('filePath must be provided');
+    }
+
+    const cleanPath = filePath.trim();
+    // 1. Remove from in-memory cachedGroups
+    this.removeDeletedFromCachedGroups([cleanPath]);
+
+    // 2. Locate sidecar and reset duplicate/burst metadata
+    const sidecarPath = this.mediaService.findSidecarFile(cleanPath);
+    if (sidecarPath && fs.existsSync(sidecarPath)) {
+      try {
+        const raw = fs.readFileSync(sidecarPath, 'utf-8');
+        const sidecarData = JSON.parse(raw);
+
+        sidecarData.is_burst_duplicate = false;
+        sidecarData.unmarked_as_duplicate = true;
+        delete sidecarData.burst_primary;
+        delete sidecarData.duplicate_group_id;
+        delete sidecarData.similar_group_files;
+
+        sidecarData.updated_at = new Date().toISOString();
+        fs.writeFileSync(sidecarPath, JSON.stringify(sidecarData, null, 2), 'utf-8');
+      } catch (err: any) {
+        this.logger.warn(`Failed to update sidecar during unmark for ${cleanPath}: ${err.message}`);
+      }
+    }
+
+    // 3. Clear database media_hashes record so it won't be re-grouped
+    try {
+      this.db.deleteMediaHashes([cleanPath]);
+    } catch (dbErr: any) {
+      this.logger.warn(`Database hash removal notice for ${cleanPath}: ${dbErr.message}`);
+    }
+
+    // 4. Invalidate media cache
+    this.mediaService.invalidateCache();
+
+    this.logBuffer?.info('Duplicates', `User marked file as NOT a duplicate: '${cleanPath}'`, { filePath: cleanPath });
+
+    return {
+      success: true,
+      message: 'File successfully unmarked as duplicate and detached from duplicate group.',
+      filePath: cleanPath,
+    };
+  }
 }
