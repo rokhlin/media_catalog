@@ -82,12 +82,18 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       const ext = path.extname(r.file_path || r.filename || '').toLowerCase();
       const isVideo = this.config.supportedVideoExts.has(ext) || r.media_type === 'video';
       const isImage = this.config.supportedPhotoExts.has(ext) || r.media_type === 'photo';
-      const fileFaces = allFacesByFile[r.file_path] || [];
+      const baseName = r.filename || path.basename(r.file_path || '');
+      const fileFaces = allFacesByFile[r.file_path] ||
+        allFacesByFile[r.file_path.replace(/\\/g, '/')] ||
+        allFacesByFile[r.file_path.replace(/\//g, '\\')] ||
+        allFacesByFile[baseName] ||
+        allFacesByFile[baseName.toLowerCase()] ||
+        [];
       const faceNames = fileFaces.map((f: any) => f.name || f.person_name).filter(Boolean);
 
       let resolvedDate = r.media_date;
       if (!resolvedDate) {
-        const fname = r.filename || path.basename(r.file_path || '');
+        const fname = baseName;
         const m1 = fname.match(/^(\d{4})[-_](\d{2})[-_](\d{2})/);
         const m2 = fname.match(/^(?:IMG_|VID_|PXL_|PHOTO_)?(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/);
         if (m1) {
@@ -97,53 +103,106 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
+      let description = r.description;
+      let descriptionRu = r.description_ru;
+      let summary = r.summary;
+      let summaryRu = r.summary_ru;
+      let phash = r.phash;
+      let environment = r.environment;
+      let lighting = r.lighting;
+      let lightingRu = r.lighting_ru;
+      let weather = r.weather;
+      let weatherRu = r.weather_ru;
+      let timeOfDay = r.time_of_day;
+      let timeOfDayRu = r.time_of_day_ru;
+      let ocrText = r.ocr_text;
+      let exifAnalysis = r.exif_analysis;
+      let exifAnalysisRu = r.exif_analysis_ru;
+      let transcription = r.transcription;
+      let transcriptionRu = r.transcription_ru;
+      let timelineEvents = r.timeline_events;
+      let cameraMake = r.camera_make;
+      let cameraModel = r.camera_model;
+      let locationName = r.location_name;
+      let latitude = r.latitude != null ? Number(r.latitude) : null;
+      let longitude = r.longitude != null ? Number(r.longitude) : null;
+
+      if (!summary && !description) {
+        const sPath = this.findSidecarFile(r.file_path);
+        if (sPath && fs.existsSync(sPath)) {
+          try {
+            const raw = fs.readFileSync(sPath, 'utf-8');
+            const sdata = JSON.parse(raw);
+            const ga = sdata.gemini_analysis || sdata.analysis || sdata.metadata || {};
+            if (ga.description || sdata.description) description = ga.description || sdata.description;
+            if (ga.description_ru || sdata.description_ru) descriptionRu = ga.description_ru || sdata.description_ru;
+            if (ga.summary || sdata.summary) summary = ga.summary || sdata.summary;
+            if (ga.summary_ru || sdata.summary_ru) summaryRu = ga.summary_ru || sdata.summary_ru;
+            if (ga.environment || sdata.environment) environment = ga.environment || sdata.environment;
+            if (ga.lighting || sdata.lighting) lighting = ga.lighting || sdata.lighting;
+            if (ga.lighting_ru || sdata.lighting_ru) lightingRu = ga.lighting_ru || sdata.lighting_ru;
+            if (ga.weather || sdata.weather) weather = ga.weather || sdata.weather;
+            if (ga.weather_ru || sdata.weather_ru) weatherRu = ga.weather_ru || sdata.weather_ru;
+            if (ga.time_of_day || sdata.time_of_day) timeOfDay = ga.time_of_day || sdata.time_of_day;
+            if (ga.time_of_day_ru || sdata.time_of_day_ru) timeOfDayRu = ga.time_of_day_ru || sdata.time_of_day_ru;
+            if (ga.ocr_text || sdata.ocr_text) ocrText = ga.ocr_text || sdata.ocr_text;
+            if (ga.exif_analysis || sdata.exif_analysis) exifAnalysis = ga.exif_analysis || sdata.exif_analysis;
+            if (ga.exif_analysis_ru || sdata.exif_analysis_ru) exifAnalysisRu = ga.exif_analysis_ru || sdata.exif_analysis_ru;
+            if (ga.transcription || sdata.transcription) transcription = ga.transcription || sdata.transcription;
+            if (ga.transcription_ru || sdata.transcription_ru) transcriptionRu = ga.transcription_ru || sdata.transcription_ru;
+            if (ga.timeline_events || sdata.timeline_events) timelineEvents = ga.timeline_events || sdata.timeline_events;
+            if (sdata.phash && !phash) phash = sdata.phash;
+          } catch {}
+        }
+      }
+
       return {
         file_path: r.file_path,
-        filename: r.filename || path.basename(r.file_path),
+        filename: baseName,
         folder: r.folder,
         file_size: r.file_size,
         mtime: r.mtime,
         capture_date: resolvedDate,
         media_date: resolvedDate,
-        phash: r.phash,
+        phash: phash,
         is_video: isVideo,
         is_image: isImage,
         status: r.status || 'PROCESSED',
         sidecar_path: r.sidecar_path,
-        description: r.description,
-        description_ru: r.description_ru,
-        summary: r.summary,
-        summary_ru: r.summary_ru,
-        environment: r.environment,
-        lighting: r.lighting,
-        lighting_ru: r.lighting_ru,
-        weather: r.weather,
-        weather_ru: r.weather_ru,
-        time_of_day: r.time_of_day,
-        time_of_day_ru: r.time_of_day_ru,
-        ocr_text: r.ocr_text,
-        exif_analysis: r.exif_analysis,
-        exif_analysis_ru: r.exif_analysis_ru,
-        transcription: r.transcription,
-        transcription_ru: r.transcription_ru,
-        timeline_events: r.timeline_events,
-        camera_make: r.camera_make,
-        camera_model: r.camera_model,
-        location_name: r.location_name,
-        latitude: r.latitude != null ? Number(r.latitude) : null,
-        longitude: r.longitude != null ? Number(r.longitude) : null,
-        gps: (r.latitude != null && r.longitude != null)
-          ? { latitude: Number(r.latitude), longitude: Number(r.longitude) }
+        description: description,
+        description_ru: descriptionRu,
+        summary: summary,
+        summary_ru: summaryRu,
+        environment: environment,
+        lighting: lighting,
+        lighting_ru: lightingRu,
+        weather: weather,
+        weather_ru: weatherRu,
+        time_of_day: timeOfDay,
+        time_of_day_ru: timeOfDayRu,
+        ocr_text: ocrText,
+        exif_analysis: exifAnalysis,
+        exif_analysis_ru: exifAnalysisRu,
+        transcription: transcription,
+        transcription_ru: transcriptionRu,
+        timeline_events: timelineEvents,
+        camera_make: cameraMake,
+        camera_model: cameraModel,
+        location_name: locationName,
+        latitude: latitude,
+        longitude: longitude,
+        gps: (latitude != null && longitude != null)
+          ? { latitude, longitude }
           : null,
-        face_count: fileFaces.length || faceCounts[r.file_path] || 0,
+        face_count: fileFaces.length || faceCounts[r.file_path] || faceCounts[baseName] || 0,
         faces: fileFaces,
         face_names: faceNames,
         has_unassigned_faces: fileFaces.some((f: any) => !f.is_reference || f.name?.startsWith('face_')),
         modules_status: r.modules_status ? (typeof r.modules_status === 'string' ? JSON.parse(r.modules_status) : r.modules_status) : {
-          transcribe: r.media_type === 'video' ? Boolean(r.transcription) : null,
+          transcribe: r.media_type === 'video' ? Boolean(transcription) : null,
           faces: fileFaces.length > 0 || faceNames.length > 0,
-          duplicates: Boolean(r.phash),
-          vision: Boolean(r.summary || r.description),
+          duplicates: Boolean(phash),
+          vision: Boolean(summary || description),
         },
         is_vault: Boolean(r.is_vault),
         error_message: null,
@@ -1879,11 +1938,12 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
     let locationName: string | null = dbMeta?.location_name || null;
 
     // Invalidate sidecar cache for this file to ensure freshest read
+    let sdata: any = null;
     const resolvedSidecar = this.findSidecarFile(resolved, undefined, sidecar);
     if (resolvedSidecar) {
       this.sidecarCache.delete(resolvedSidecar);
       sidecar = resolvedSidecar;
-      const sdata = this.readParsedSidecar(resolvedSidecar);
+      sdata = this.readParsedSidecar(resolvedSidecar);
       if (sdata) {
         const ga = sdata.gemini_analysis || sdata.analysis || sdata.metadata || {};
         if (ga.description || sdata.description) desc = ga.description || sdata.description;
@@ -1979,6 +2039,51 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    // Fallback: extract faces from sidecar if not in DB
+    if (dedupFaces.length === 0 && sdata) {
+      const rawFaces = sdata.faces || sdata.detected_faces || sdata.gemini_analysis?.faces || [];
+      if (Array.isArray(rawFaces) && rawFaces.length > 0) {
+        for (let idx = 0; idx < rawFaces.length; idx++) {
+          const faceItem = rawFaces[idx];
+          if (typeof faceItem === 'string') {
+            const fid = `face_${baseName}_${idx}`;
+            if (!seenFids.has(fid)) {
+              seenFids.add(fid);
+              dedupFaces.push({
+                face_id: fid,
+                name: faceItem,
+                confidence: 1.0,
+                is_reference: !faceItem.startsWith('face_') ? 1 : 0,
+                source_file: resolved,
+              });
+              faceNames.push(faceItem);
+            }
+          } else if (faceItem && typeof faceItem === 'object') {
+            const fid = faceItem.face_id || faceItem.id || `face_${baseName}_${idx}`;
+            if (!seenFids.has(fid)) {
+              seenFids.add(fid);
+              const name = faceItem.name || faceItem.person_name || `face_${idx}`;
+              dedupFaces.push({
+                face_id: fid,
+                person_id: faceItem.person_id || null,
+                name: name,
+                confidence: typeof faceItem.confidence === 'number' ? faceItem.confidence : 0.95,
+                bbox: faceItem.bbox || null,
+                image_path: faceItem.image_path || faceItem.crop_path || faceItem.image || null,
+                time_start: faceItem.time_start || null,
+                time_end: faceItem.time_end || null,
+                is_reference: faceItem.is_reference !== undefined ? (faceItem.is_reference ? 1 : 0) : (name && !name.startsWith('face_') ? 1 : 0),
+                source_file: resolved,
+              });
+              if (!faceNames.includes(name)) {
+                faceNames.push(name);
+              }
+            }
+          }
+        }
+      }
+    }
+
     const item: any = {
       file_path: resolved,
       filename: baseName,
@@ -1987,6 +2092,9 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       mtime: mtime,
       capture_date: captureDate,
       media_date: mediaDate,
+      phash: sdata?.phash || dbMeta?.phash || null,
+      camera_make: sdata?.exif?.camera_make || dbMeta?.camera_make || null,
+      camera_model: sdata?.exif?.camera_model || dbMeta?.camera_model || null,
       latitude: latitude,
       longitude: longitude,
       location_name: locationName,

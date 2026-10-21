@@ -43,6 +43,7 @@ export default function DuplicatesManagerTab({
   const [burstWindowSec, setBurstWindowSec] = useState<number>(3.0);
   const [selectedFolderScope, setSelectedFolderScope] = useState<string>('all');
   const [forceRehash, setForceRehash] = useState(false);
+  const [hasUserEditedConfig, setHasUserEditedConfig] = useState(false);
 
   // Selection state for batch actions (File paths selected for cleanup)
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
@@ -90,10 +91,12 @@ export default function DuplicatesManagerTab({
       if (resConfig.ok) {
         const data = await resConfig.json();
         setConfig(data);
-        if (data.default_engine) setSelectedEngine(data.default_engine);
-        if (data.similarity_threshold) setSimilarityThreshold(data.similarity_threshold);
-        if (data.burst_window_seconds) setBurstWindowSec(data.burst_window_seconds);
-        if (data.target_move_folder) setTargetMoveFolder(data.target_move_folder);
+        if (!hasUserEditedConfig) {
+          if (data.default_engine) setSelectedEngine(data.default_engine);
+          if (data.similarity_threshold) setSimilarityThreshold(data.similarity_threshold);
+          if (data.burst_window_seconds) setBurstWindowSec(data.burst_window_seconds);
+          if (data.target_move_folder) setTargetMoveFolder(data.target_move_folder);
+        }
       }
     } catch (err) {
       console.error('Error loading duplicates data:', err);
@@ -151,7 +154,19 @@ export default function DuplicatesManagerTab({
   // Trigger scan
   const handleStartScan = async () => {
     try {
+      setHasUserEditedConfig(true);
       const folders = selectedFolderScope !== 'all' ? [selectedFolderScope] : undefined;
+      try {
+        await authFetch('/api/duplicates/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            default_engine: selectedEngine,
+            similarity_threshold: similarityThreshold,
+            burst_window_seconds: burstWindowSec,
+          }),
+        });
+      } catch {}
       const res = await authFetch('/api/duplicates/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -202,7 +217,7 @@ export default function DuplicatesManagerTab({
   // Smart Selection: Select All Non-Primary Duplicates
   const handleSelectAllDuplicates = () => {
     const allDups = new Set<string>();
-    groups.forEach((g) => {
+    filteredGroups.forEach((g) => {
       g.duplicates.forEach((d) => {
         allDups.add(d.filePath);
       });
@@ -300,11 +315,34 @@ export default function DuplicatesManagerTab({
     return total;
   }, [groups, selectedFiles]);
 
-  const totalPages = Math.max(1, Math.ceil(groups.length / GROUPS_PER_PAGE));
+  // Filter groups in real time based on active user controls (mode, similarity threshold, and folder)
+  const filteredGroups = useMemo(() => {
+    return groups.filter((g) => {
+      if (selectedMode !== 'all' && g.matchType !== selectedMode) {
+        return false;
+      }
+      if (g.matchType === 'visual' && g.similarity < similarityThreshold) {
+        return false;
+      }
+      if (selectedFolderScope !== 'all') {
+        const scopeLower = selectedFolderScope.toLowerCase();
+        const inPrimary = g.primaryFile?.folder?.toLowerCase().includes(scopeLower);
+        const inDups = g.duplicates?.some((d) => d.folder?.toLowerCase().includes(scopeLower));
+        if (!inPrimary && !inDups) return false;
+      }
+      return true;
+    });
+  }, [groups, selectedMode, similarityThreshold, selectedFolderScope]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedMode, similarityThreshold, selectedFolderScope]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredGroups.length / GROUPS_PER_PAGE));
   const paginatedGroups = useMemo(() => {
     const start = (currentPage - 1) * GROUPS_PER_PAGE;
-    return groups.slice(start, start + GROUPS_PER_PAGE);
-  }, [groups, currentPage]);
+    return filteredGroups.slice(start, start + GROUPS_PER_PAGE);
+  }, [filteredGroups, currentPage]);
 
   const formatBytes = (bytes: number) => {
     if (!bytes || bytes === 0) return '0 B';
@@ -424,7 +462,7 @@ export default function DuplicatesManagerTab({
       />
 
       {/* Smart Selection & Action Bar */}
-      {groups.length > 0 && (
+      {filteredGroups.length > 0 && (
         <div className="dup-actions-bar">
           <div className="dup-selection-tools">
             <button
@@ -480,7 +518,7 @@ export default function DuplicatesManagerTab({
 
       {/* Duplicate Groups List */}
       <div className="dup-groups-list">
-        {groups.length === 0 && !isLoading && !isScanning ? (
+        {filteredGroups.length === 0 && !isLoading && !isScanning ? (
           <div
             style={{
               padding: '3rem',

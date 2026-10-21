@@ -25,6 +25,14 @@ export class FacesController {
   constructor(@Inject(FacesService) private readonly facesService: FacesService) {}
 
   @Public()
+  @Get('detect')
+  @ApiOperation({ summary: 'Get face detections for a specific media file' })
+  @ApiQuery({ name: 'file', required: true, description: 'Filename or path to the media file' })
+  async detectFacesForFile(@Query('file') file: string) {
+    return this.facesService.getFacesForFile(file);
+  }
+
+  @Public()
   @Get()
   @ApiOperation({ summary: 'List all registered faces in the database' })
   async listFaces() {

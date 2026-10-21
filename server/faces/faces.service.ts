@@ -27,6 +27,69 @@ export class FacesService {
     return this.config.outputFolder || '';
   }
 
+  getFacesForFile(file: string): any[] {
+    if (!file || !file.trim()) {
+      return [];
+    }
+    this.db.initDb();
+    const trimmed = file.trim();
+    let faces = this.db.getFacesBySourceFile(trimmed);
+    if (faces.length > 0) {
+      return faces;
+    }
+
+    const base = path.basename(trimmed);
+    const cand = path.resolve(this.config.outputFolder, `${base}.json`);
+    if (fs.existsSync(cand)) {
+      try {
+        const raw = fs.readFileSync(cand, 'utf-8');
+        const sdata = JSON.parse(raw);
+        const rawFaces = sdata.faces || sdata.detected_faces || sdata.gemini_analysis?.faces || [];
+        if (Array.isArray(rawFaces) && rawFaces.length > 0) {
+          const dedupMap = new Map<string, any>();
+          for (let idx = 0; idx < rawFaces.length; idx++) {
+            const item = rawFaces[idx];
+            if (typeof item === 'string') {
+              const fid = `face_${base}_${idx}`;
+              if (!dedupMap.has(fid)) {
+                dedupMap.set(fid, {
+                  face_id: fid,
+                  name: item,
+                  confidence: 1.0,
+                  is_reference: !item.startsWith('face_') ? 1 : 0,
+                  source_file: trimmed,
+                });
+              }
+            } else if (item && typeof item === 'object') {
+              const fid = item.face_id || item.id || `face_${base}_${idx}`;
+              if (!dedupMap.has(fid)) {
+                const name = item.name || item.person_name || `face_${idx}`;
+                dedupMap.set(fid, {
+                  face_id: fid,
+                  person_id: item.person_id || null,
+                  name: name,
+                  confidence: typeof item.confidence === 'number' ? item.confidence : 0.95,
+                  bbox: item.bbox || null,
+                  image_path: item.image_path || item.crop_path || item.image || null,
+                  time_start: item.time_start || null,
+                  time_end: item.time_end || null,
+                  is_reference: item.is_reference !== undefined ? (item.is_reference ? 1 : 0) : (name && !name.startsWith('face_') ? 1 : 0),
+                  source_file: trimmed,
+                });
+              }
+            }
+          }
+          const sidecarFaces = Array.from(dedupMap.values());
+          try {
+            this.db.saveMediaFaces(trimmed, sidecarFaces);
+          } catch {}
+          return sidecarFaces;
+        }
+      } catch {}
+    }
+    return [];
+  }
+
   getAllRegisteredFaces() {
     this.db.initDb();
     return this.db.getAllRegisteredFaces();

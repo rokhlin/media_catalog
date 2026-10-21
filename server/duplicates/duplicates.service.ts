@@ -471,6 +471,20 @@ export class DuplicatesService {
       let width: number | null = cached?.width || null;
       let height: number | null = cached?.height || null;
 
+      // Check sidecar on disk first to avoid redundant perceptual hash recalculation
+      if (isImage && !phash) {
+        try {
+          const sPath = this.mediaService?.findSidecarFile(filePath);
+          if (sPath && fs.existsSync(sPath)) {
+            const raw = fs.readFileSync(sPath, 'utf-8');
+            const sdata = JSON.parse(raw);
+            if (sdata.phash) {
+              phash = sdata.phash;
+            }
+          }
+        } catch {}
+      }
+
       // Only invoke Sharp if pHash is missing and file is an image
       if (isImage && !phash) {
         try {

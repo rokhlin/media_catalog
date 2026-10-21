@@ -1,5 +1,5 @@
-import { Controller, Get, Post, Body, Inject } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Controller, Get, Post, Body, Inject, Query } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { DuplicatesService } from './duplicates.service.js';
 
 @ApiTags('Duplicates')
@@ -50,8 +50,33 @@ export class DuplicatesController {
   }
 
   @Get('groups')
-  @ApiOperation({ summary: 'Get list of detected duplicate and similarity groups' })
-  async getGroups() {
+  @ApiOperation({ summary: 'Get list of detected duplicate and similarity groups with optional on-demand clustering' })
+  @ApiQuery({ name: 'mode', required: false, enum: ['all', 'exact', 'visual', 'burst'] })
+  @ApiQuery({ name: 'similarity_threshold', required: false, type: Number })
+  @ApiQuery({ name: 'burst_window_seconds', required: false, type: Number })
+  @ApiQuery({ name: 'folder', required: false, type: String })
+  @ApiQuery({ name: 'keep_strategy', required: false, type: String })
+  async getGroups(
+    @Query('mode') mode?: 'all' | 'exact' | 'similar' | 'visual' | 'burst',
+    @Query('similarity_threshold') similarityThreshold?: number,
+    @Query('similarityThreshold') similarityThresholdAlt?: number,
+    @Query('burst_window_seconds') burstWindowSeconds?: number,
+    @Query('burstWindowSeconds') burstWindowSecondsAlt?: number,
+    @Query('folder') folder?: string,
+    @Query('keep_strategy') keepStrategy?: any,
+  ) {
+    const threshold = similarityThreshold !== undefined ? Number(similarityThreshold) : (similarityThresholdAlt !== undefined ? Number(similarityThresholdAlt) : undefined);
+    const burstWindow = burstWindowSeconds !== undefined ? Number(burstWindowSeconds) : (burstWindowSecondsAlt !== undefined ? Number(burstWindowSecondsAlt) : undefined);
+
+    if (mode || threshold !== undefined || burstWindow !== undefined || folder || keepStrategy) {
+      return await this.duplicatesService.getDuplicateGroups(
+        mode || 'all',
+        threshold !== undefined ? threshold : 0.90,
+        burstWindow !== undefined ? burstWindow : 3.0,
+        keepStrategy || 'highest_resolution',
+        folder,
+      );
+    }
     return await this.duplicatesService.getGroups();
   }
 

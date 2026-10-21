@@ -38,7 +38,7 @@ describe('DuplicatesService', () => {
       {
         verifyFileAccess: (p: string) => ({ accessible: true, resolvedPath: p }),
         invalidateCache: () => {},
-        findSidecarFile: (p: string) => null,
+        findSidecarFile: (_p: string) => null,
       } as any,
     );
   });

@@ -790,16 +790,42 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
   saveMediaMetadata(filePath: string, metadata: Record<string, any>, mediaId?: string): void {
     const db = this.getDb();
-    const mId = mediaId || `media_${Buffer.from(filePath).toString('hex').slice(0, 16)}`;
     const baseName = path.basename(filePath);
+    const normSlash = filePath.replace(/\\/g, '/');
+    const normBackslash = filePath.replace(/\//g, '\\');
 
-    const insertItem = db.prepare(`
-      INSERT INTO media_items (id, file_path, file_name, media_type, file_size, mtime, status, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'PROCESSED', datetime('now', 'localtime'))
+    // Query for existing media_item to reuse its primary key id and prevent foreign key mismatch
+    let mId = mediaId;
+    let existingPath = filePath;
+    const existing = db.prepare(`
+      SELECT id, file_path FROM media_items
+      WHERE file_path = ? OR file_path = ? OR LOWER(file_path) = LOWER(?) OR LOWER(file_path) = LOWER(?)
+      LIMIT 1
+    `).get(filePath, normSlash, normSlash, normBackslash) as { id: string; file_path: string } | undefined;
+
+    if (existing) {
+      mId = mId || existing.id;
+      existingPath = existing.file_path;
+    } else {
+      mId = mId || `media_${Buffer.from(filePath).toString('hex').slice(0, 16)}`;
+    }
+
+    const insertOrUpdateItem = db.prepare(`
+      INSERT INTO media_items (id, file_path, file_name, media_type, file_size, mtime, phash, status, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'PROCESSED', datetime('now', 'localtime'))
       ON CONFLICT(file_path) DO UPDATE SET
         file_name = excluded.file_name,
+        phash = COALESCE(excluded.phash, media_items.phash),
         status = 'PROCESSED',
         updated_at = datetime('now', 'localtime')
+    `);
+
+    const updatePhashOnly = db.prepare(`
+      UPDATE media_items
+      SET phash = COALESCE(?, phash),
+          status = 'PROCESSED',
+          updated_at = datetime('now', 'localtime')
+      WHERE id = ?
     `);
 
     const insertMeta = db.prepare(`
@@ -837,7 +863,18 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     `);
 
     const transaction = db.transaction(() => {
-      insertItem.run(mId, filePath, baseName, metadata.media_type || 'image', metadata.file_size || 0, metadata.mtime || 0);
+      insertOrUpdateItem.run(
+        mId,
+        existingPath,
+        baseName,
+        metadata.media_type || 'image',
+        metadata.file_size || 0,
+        metadata.mtime || 0,
+        metadata.phash || null
+      );
+      if (metadata.phash) {
+        updatePhashOnly.run(metadata.phash, mId);
+      }
       insertMeta.run(
         mId,
         metadata.summary || null,
@@ -865,7 +902,6 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
     transaction();
   }
-
   /**
    * Save extracted or AI-generated semantic tags for a media item.
    */
@@ -1204,14 +1240,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     if (!db) return;
 
     try {
-      const rows = db.prepare(`
-        SELECT id, file_path, file_name, sidecar_path, media_date, latitude, longitude, location_name
-        FROM media_items
-        WHERE media_date IS NULL OR latitude IS NULL OR location_name IS NULL
-      `).all() as any[];
-
-      if (!rows || rows.length === 0) return;
-
+      const outputDir = this.config.outputFolder;
       const updateStmt = db.prepare(`
         UPDATE media_items
         SET
@@ -1219,27 +1248,81 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
           latitude = COALESCE(?, latitude),
           longitude = COALESCE(?, longitude),
           location_name = COALESCE(?, location_name),
+          phash = COALESCE(?, phash),
+          status = 'PROCESSED',
           updated_at = datetime('now', 'localtime')
         WHERE id = ?
       `);
 
+      const insertHashStmt = db.prepare(`
+        INSERT INTO media_hashes (file_path, phash, file_size, mtime, created_at)
+        VALUES (?, ?, ?, ?, datetime('now', 'localtime'))
+        ON CONFLICT(file_path) DO UPDATE SET
+          phash = COALESCE(excluded.phash, media_hashes.phash)
+      `);
+
+      const insertMetaStmt = db.prepare(`
+        INSERT INTO media_metadata (
+          media_id, summary, summary_ru, description, description_ru, environment, lighting, lighting_ru,
+          weather, weather_ru, time_of_day, time_of_day_ru, ocr_text, exif_analysis, exif_analysis_ru,
+          transcription, transcription_ru, timeline_events, camera_make, camera_model, location_name
+        )
+        VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?
+        )
+        ON CONFLICT(media_id) DO UPDATE SET
+          summary = COALESCE(excluded.summary, media_metadata.summary),
+          summary_ru = COALESCE(excluded.summary_ru, media_metadata.summary_ru),
+          description = COALESCE(excluded.description, media_metadata.description),
+          description_ru = COALESCE(excluded.description_ru, media_metadata.description_ru),
+          environment = COALESCE(excluded.environment, media_metadata.environment),
+          lighting = COALESCE(excluded.lighting, media_metadata.lighting),
+          lighting_ru = COALESCE(excluded.lighting_ru, media_metadata.lighting_ru),
+          weather = COALESCE(excluded.weather, media_metadata.weather),
+          weather_ru = COALESCE(excluded.weather_ru, media_metadata.weather_ru),
+          time_of_day = COALESCE(excluded.time_of_day, media_metadata.time_of_day),
+          time_of_day_ru = COALESCE(excluded.time_of_day_ru, media_metadata.time_of_day_ru),
+          ocr_text = COALESCE(excluded.ocr_text, media_metadata.ocr_text),
+          exif_analysis = COALESCE(excluded.exif_analysis, media_metadata.exif_analysis),
+          exif_analysis_ru = COALESCE(excluded.exif_analysis_ru, media_metadata.exif_analysis_ru),
+          transcription = COALESCE(excluded.transcription, media_metadata.transcription),
+          transcription_ru = COALESCE(excluded.transcription_ru, media_metadata.transcription_ru),
+          timeline_events = COALESCE(excluded.timeline_events, media_metadata.timeline_events),
+          camera_make = COALESCE(excluded.camera_make, media_metadata.camera_make),
+          camera_model = COALESCE(excluded.camera_model, media_metadata.camera_model),
+          location_name = COALESCE(excluded.location_name, media_metadata.location_name)
+      `);
+
+      // 1. Process all existing rows in media_items
+      const rows = db.prepare(`
+        SELECT m.id, m.file_path, m.file_name, m.sidecar_path, m.media_date, m.latitude, m.longitude, m.location_name, m.phash,
+               m.file_size, m.mtime, md.summary
+        FROM media_items m
+        LEFT JOIN media_metadata md ON m.id = md.media_id
+      `).all() as any[];
+
       let updatedCount = 0;
+      let metaCount = 0;
+      let hashCount = 0;
+
       const tx = db.transaction(() => {
         for (const row of rows) {
           let sPath = row.sidecar_path;
           if (!sPath || !fs.existsSync(sPath)) {
-            // Check output folder for sidecar
             const base = row.file_name || path.basename(row.file_path);
-            const cand = path.resolve(this.config.outputFolder, `${base}.json`);
+            const cand = path.resolve(outputDir, `${base}.json`);
             if (fs.existsSync(cand)) {
               sPath = cand;
             }
           }
 
-          let mediaDate: string | null = null;
-          let lat: number | null = null;
-          let lon: number | null = null;
-          let locName: string | null = null;
+          let mediaDate: string | null = row.media_date || null;
+          let lat: number | null = row.latitude != null ? Number(row.latitude) : null;
+          let lon: number | null = row.longitude != null ? Number(row.longitude) : null;
+          let locName: string | null = row.location_name || null;
+          let phash: string | null = row.phash || null;
 
           if (sPath && fs.existsSync(sPath)) {
             try {
@@ -1255,38 +1338,93 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
                 sdata.exif?.date_time ||
                 sdata.media_date;
 
-              if (rawDate) {
-                // Normalize "2016:11:04 13:40:28" to "2016-11-04 13:40:28"
+              if (rawDate && !mediaDate) {
                 const str = String(rawDate).trim();
                 const norm = str.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
                 mediaDate = norm;
               }
 
               // Extract GPS
-              if (sdata.exif?.gps?.latitude != null && sdata.exif?.gps?.longitude != null) {
-                lat = Number(sdata.exif.gps.latitude);
-                lon = Number(sdata.exif.gps.longitude);
-              } else if (sdata.exif?.latitude != null && sdata.exif?.longitude != null) {
-                lat = Number(sdata.exif.latitude);
-                lon = Number(sdata.exif.longitude);
-              } else if (sdata.gps?.latitude != null && sdata.gps?.longitude != null) {
-                lat = Number(sdata.gps.latitude);
-                lon = Number(sdata.gps.longitude);
+              if (lat == null || lon == null) {
+                if (sdata.exif?.gps?.latitude != null && sdata.exif?.gps?.longitude != null) {
+                  lat = Number(sdata.exif.gps.latitude);
+                  lon = Number(sdata.exif.gps.longitude);
+                } else if (sdata.exif?.latitude != null && sdata.exif?.longitude != null) {
+                  lat = Number(sdata.exif.latitude);
+                  lon = Number(sdata.exif.longitude);
+                } else if (sdata.gps?.latitude != null && sdata.gps?.longitude != null) {
+                  lat = Number(sdata.gps.latitude);
+                  lon = Number(sdata.gps.longitude);
+                }
               }
 
               // Extract location name
-              if (sdata.exif?.location) {
-                const l = sdata.exif.location;
-                locName = [l.city, l.region, l.country].filter(Boolean).join(', ') || l.city || l.country || null;
-              } else if (sdata.location_name) {
-                locName = sdata.location_name;
-              } else if (sdata.location) {
-                locName = typeof sdata.location === 'string' ? sdata.location : ([sdata.location.city, sdata.location.country].filter(Boolean).join(', ') || null);
+              if (!locName) {
+                if (sdata.exif?.location) {
+                  const l = sdata.exif.location;
+                  locName = [l.city, l.region, l.country].filter(Boolean).join(', ') || l.city || l.country || null;
+                } else if (sdata.location_name) {
+                  locName = sdata.location_name;
+                } else if (sdata.location) {
+                  locName = typeof sdata.location === 'string' ? sdata.location : ([sdata.location.city, sdata.location.country].filter(Boolean).join(', ') || null);
+                }
+              }
+
+              // Extract pHash
+              if (!phash && sdata.phash) {
+                phash = sdata.phash;
+              }
+
+              // Sync media_hashes
+              if (phash) {
+                try {
+                  insertHashStmt.run(row.file_path, phash, row.file_size || sdata.file_size || 0, row.mtime || sdata.mtime || 0);
+                  hashCount++;
+                } catch {}
+              }
+
+              // Extract and sync gemini_analysis
+              const ga = sdata.gemini_analysis || sdata.analysis || sdata.metadata;
+              if (ga && (ga.summary || ga.description || sdata.summary || sdata.description)) {
+                try {
+                  insertMetaStmt.run(
+                    row.id,
+                    ga.summary || sdata.summary || null,
+                    ga.summary_ru || sdata.summary_ru || null,
+                    ga.description || sdata.description || null,
+                    ga.description_ru || sdata.description_ru || null,
+                    ga.environment || sdata.environment || null,
+                    ga.lighting || sdata.lighting || null,
+                    ga.lighting_ru || sdata.lighting_ru || null,
+                    ga.weather || sdata.weather || null,
+                    ga.weather_ru || sdata.weather_ru || null,
+                    ga.time_of_day || sdata.time_of_day || null,
+                    ga.time_of_day_ru || sdata.time_of_day_ru || null,
+                    ga.ocr_text || sdata.ocr_text || null,
+                    ga.exif_analysis || sdata.exif_analysis || null,
+                    ga.exif_analysis_ru || sdata.exif_analysis_ru || null,
+                    ga.transcription || sdata.transcription || null,
+                    ga.transcription_ru || sdata.transcription_ru || null,
+                    ga.timeline_events ? (typeof ga.timeline_events === 'string' ? ga.timeline_events : JSON.stringify(ga.timeline_events)) : null,
+                    sdata.exif?.camera_make || null,
+                    sdata.exif?.camera_model || null,
+                    locName || null
+                  );
+                  metaCount++;
+                } catch {}
+              }
+
+              // Extract faces from sidecar if media_faces empty
+              const sFaces = sdata.faces || sdata.detected_faces || ga?.faces;
+              if (Array.isArray(sFaces) && sFaces.length > 0) {
+                try {
+                  this.saveMediaFaces(row.file_path, sFaces);
+                } catch {}
               }
             } catch {}
           }
 
-          // Fallback date from filename if still missing (e.g. 2016-07-02 12-25-42.JPG, 20240808_130100.heic, IMG_20240808_130100.jpg)
+          // Fallback date from filename if still missing
           if (!mediaDate) {
             const fname = row.file_name || path.basename(row.file_path);
             const m1 = fname.match(/^(\d{4})[-_](\d{2})[-_](\d{2})/);
@@ -1298,22 +1436,17 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
             }
           }
 
-          if (mediaDate || lat != null || lon != null || locName) {
-            updateStmt.run(mediaDate, lat, lon, locName, row.id);
-            updatedCount++;
-          }
+          updateStmt.run(mediaDate, lat, lon, locName, phash, row.id);
+          updatedCount++;
         }
       });
 
       tx();
-      if (updatedCount > 0) {
-        this.logger.log(`Synced EXIF dates & GPS coordinates for ${updatedCount} media items from sidecars`);
-      }
+      this.logger.log(`Sidecar sync completed: ${updatedCount} items checked, ${metaCount} metadata rows populated, ${hashCount} hashes saved`);
     } catch (err) {
       this.logger.warn(`Failed syncing EXIF metadata from sidecars: ${err}`);
     }
   }
-
   /**
    * Update selective metadata fields for a media file.
    * Performs an atomic UPSERT on media_items and media_metadata.
@@ -1405,6 +1538,25 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     const db = this.getDb();
     const result: Record<string, number> = {};
 
+    const addCountForKeys = (cnt: number, rawSrc: string) => {
+      if (!rawSrc) return;
+      const keys = new Set<string>();
+      keys.add(rawSrc);
+      keys.add(rawSrc.toLowerCase());
+      keys.add(rawSrc.replace(/\\/g, '/'));
+      keys.add(rawSrc.replace(/\\/g, '/').toLowerCase());
+      keys.add(rawSrc.replace(/\//g, '\\'));
+      keys.add(rawSrc.replace(/\//g, '\\').toLowerCase());
+      const base = path.basename(rawSrc);
+      if (base) {
+        keys.add(base);
+        keys.add(base.toLowerCase());
+      }
+      for (const k of keys) {
+        result[k] = Math.max(result[k] || 0, cnt);
+      }
+    };
+
     try {
       const mfRows = db.prepare(`
         SELECT COALESCE(mf.source_file, m.file_path) as source_file, COUNT(DISTINCT mf.face_id) as count
@@ -1416,7 +1568,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
       for (const r of mfRows) {
         if (r.source_file) {
-          result[r.source_file] = r.count;
+          addCountForKeys(r.count, r.source_file);
         }
       }
     } catch {
@@ -1432,8 +1584,8 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       `).all() as any[];
 
       for (const r of frRows) {
-        if (!result[r.source_file]) {
-          result[r.source_file] = r.count;
+        if (r.source_file) {
+          addCountForKeys(r.count, r.source_file);
         }
       }
     } catch {
@@ -1442,10 +1594,34 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
     return result;
   }
-
   getAllFacesBySourceFile(): Record<string, any[]> {
     const db = this.getDb();
     const result: Record<string, any[]> = {};
+
+    const addRecordForKeys = (face: any, rawSrc: string) => {
+      if (!rawSrc) return;
+      const keys = new Set<string>();
+      keys.add(rawSrc);
+      keys.add(rawSrc.toLowerCase());
+      keys.add(rawSrc.replace(/\\/g, '/'));
+      keys.add(rawSrc.replace(/\\/g, '/').toLowerCase());
+      keys.add(rawSrc.replace(/\//g, '\\'));
+      keys.add(rawSrc.replace(/\//g, '\\').toLowerCase());
+      const base = path.basename(rawSrc);
+      if (base) {
+        keys.add(base);
+        keys.add(base.toLowerCase());
+      }
+
+      for (const k of keys) {
+        if (!result[k]) {
+          result[k] = [];
+        }
+        if (!result[k].some((x: any) => x.face_id === face.face_id)) {
+          result[k].push(face);
+        }
+      }
+    };
 
     try {
       const mfRows = db.prepare(`
@@ -1465,19 +1641,14 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       for (const r of mfRows) {
         const src = r.source_file || '';
         if (src) {
-          if (!result[src]) {
-            result[src] = [];
-          }
-          if (!result[src].some((x: any) => x.face_id === r.face_id)) {
-            if (typeof r.bbox === 'string') {
-              try {
-                r.bbox = JSON.parse(r.bbox);
-              } catch {
-                // ignore
-              }
+          if (typeof r.bbox === 'string') {
+            try {
+              r.bbox = JSON.parse(r.bbox);
+            } catch {
+              // ignore
             }
-            result[src].push(r);
           }
+          addRecordForKeys(r, src);
         }
       }
     } catch {
@@ -1496,11 +1667,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       for (const r of frRows) {
         const src = r.source_file || '';
         if (src) {
-          if (!result[src]) {
-            result[src] = [r];
-          } else if (!result[src].some((x: any) => x.face_id === r.face_id)) {
-            result[src].push(r);
-          }
+          addRecordForKeys(r, src);
         }
       }
     } catch {
@@ -1509,7 +1676,6 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
     return result;
   }
-
   getFacesBySourceFile(filePath: string): any[] {
     const db = this.getDb();
     const baseName = path.basename(filePath).toLowerCase();
