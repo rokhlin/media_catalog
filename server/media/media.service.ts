@@ -888,10 +888,18 @@ export class MediaService implements OnModuleInit, OnModuleDestroy {
       for (const folder of foldersToScan) {
         let scanTarget = folder;
         if (!fs.existsSync(scanTarget)) {
-          // If in Docker container with Windows UNC / drive path, fallback to mounted container media_input
+          // If in Docker container with Windows UNC / drive path, check if subfolder exists under media_input
+          const baseName = path.basename(folder);
+          const candSub1 = path.resolve(this.config.projectRoot, 'media_input', baseName);
+          const candSub2 = path.join('/app/media_input', baseName);
           const cand1 = path.resolve(this.config.projectRoot, 'media_input');
           const cand2 = '/app/media_input';
-          if (fs.existsSync(cand1) && fs.statSync(cand1).isDirectory()) {
+
+          if (baseName && fs.existsSync(candSub1) && fs.statSync(candSub1).isDirectory()) {
+            scanTarget = candSub1;
+          } else if (baseName && fs.existsSync(candSub2) && fs.statSync(candSub2).isDirectory()) {
+            scanTarget = candSub2;
+          } else if (fs.existsSync(cand1) && fs.statSync(cand1).isDirectory()) {
             scanTarget = cand1;
           } else if (fs.existsSync(cand2) && fs.statSync(cand2).isDirectory()) {
             scanTarget = cand2;

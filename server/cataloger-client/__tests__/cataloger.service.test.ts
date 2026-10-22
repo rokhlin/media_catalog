@@ -212,4 +212,24 @@ describe('CatalogerClientService', () => {
     assert.strictEqual(clearRes.status, 'success');
     assert.strictEqual(fs.readFileSync(logFile, 'utf-8'), '');
   });
+
+  it('should filter files by targeted folders in triggerRun and pass modes', async () => {
+    const runRes = await catalogerService.triggerRun(false, {
+      folders: [tmpDir],
+      modes: ['vision', 'faces'],
+    });
+    assert.strictEqual(runRes.status, 'started');
+    assert.strictEqual(runRes.provided_files_count, 1);
+  });
+
+  it('should return completed with 0 files when selected folders contain no media', async () => {
+    const runRes = await catalogerService.triggerRun(false, {
+      folders: ['/nonexistent/subfolder/path'],
+    });
+    assert.strictEqual(runRes.status, 'completed');
+    assert.strictEqual(runRes.files_count, 0);
+    assert.strictEqual(runRes.provided_files_count, 0);
+    assert.ok(runRes.message.includes('No files found to process'));
+  });
 });
+
